@@ -182,7 +182,8 @@ class Workflow:
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
-    telemetry: bool = True
+    # SURREALDB-MULTIUSER MODIFICATION: Disable telemetry for privacy/compliance
+    telemetry: bool = False
 
     # Add this flag to control if the workflow should add history to the steps
     add_workflow_history_to_steps: bool = False

@@ -775,7 +775,7 @@ class Model(ABC):
             # Check cache if enabled
             if self.cache_response:
                 cache_key = self._get_model_cache_key(
-                    messages, stream=False, response_format=response_format, tools=tools
+                    messages, stream=True, response_format=response_format, tools=tools
                 )
                 cached_data = self._get_cached_model_response(cache_key)
 
