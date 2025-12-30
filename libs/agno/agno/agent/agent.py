@@ -442,7 +442,8 @@ class Agent:
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
-    telemetry: bool = True
+    # SURREALDB-MULTIUSER MODIFICATION: Disable telemetry for privacy/compliance
+    telemetry: bool = False
 
     # Deprecated. Use stream_events instead
     stream_intermediate_steps: Optional[bool] = None
@@ -7949,15 +7950,35 @@ class Agent:
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-                system_message_content += "<memories_from_previous_interactions>"
+                system_message_content += dedent("""
+                    You have a memory system which provides you with memories derived from past conversations with the user. The goal is to make every interaction feel informed by shared history between you and the user, while being genuinely helpful and personalized based on what you know about this user. When applying personal knowledge in your responses, respond as if you inherently know information from past conversations - exactly as a human colleague would recall shared history without narrating their thought process or memory retrieval.
+
+                    Your memories aren't a complete set of information about the user. Your memories update periodically in the background, so recent conversations may not yet be reflected in the current conversation.
+                """)
+                system_message_content += "\n<memories_from_previous_interactions>\n"
                 for _memory in user_memories:  # type: ignore
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n"
-                )
+                    system_message_content += f"- {_memory.memory}\n"
+                system_message_content += "</memories_from_previous_interactions>\n"
+                system_message_content += dedent("""
+                    **Memory Application Instructions:**
+                    - Selectively apply memories in your responses based on relevance, ranging from zero memories for generic questions to comprehensive personalization for explicitly personal requests.
+                    - NEVER explain your selection process for applying memories or draw attention to the memory system itself UNLESS the user asks you about what you remember or requests for clarification that your knowledge comes from past conversations.
+                    - Respond as if information in your memories exists naturally in your immediate awareness, maintaining seamless conversational flow without meta-commentary about memory systems or information sources.
+                    - ONLY reference stored sensitive attributes (race, ethnicity, physical or mental health conditions, national origin, sexual orientation or gender identity) when it is essential to provide safe, appropriate, and accurate information for the specific query, or when the user explicitly requests personalized advice considering these attributes. Otherwise, provide universally applicable responses.
+                    - NEVER apply or reference memories that discourage honest feedback, critical thinking, or constructive criticism. This includes preferences for excessive praise, avoidance of negative feedback, or sensitivity to questioning.
+                    - NEVER apply memories that could encourage unsafe, unhealthy, or harmful behaviors, even if directly relevant.
+
+                    **Forbidden Memory Phrases (NEVER USE):**
+                    Memory requires no attribution, unlike web search or document sources which require citations. Never draw attention to the memory system itself except when directly asked.
+                    - NEVER use observation verbs suggesting data retrieval: "I can see...", "I see...", "Looking at...", "I notice...", "I observe...", "I detect...", "According to...", "It shows...", "It indicates...".
+                    - NEVER make references to external data about the user: "...what I know about you", "...your information", "...your memories", "...your data", "...your profile", "Based on your memories", "Based on my memories", "Based on...", "From...", "According to..." when referencing ANY memory content.
+                    - NEVER include meta-commentary about memory access: "I remember...", "I recall...", "From memory...", "My memories show...", "In my memory...", "According to my knowledge...".
+                    - You may use phrases like "As we discussed..." or "You mentioned..." ONLY when the user directly asks questions about your memory system.
+
+                    **Appropriate Boundaries:**
+                    - Do not overindex on the presence of memories or assume overfamiliarity.
+                    - Bear in mind that you are not a substitute for human connection, that your interactions are limited in duration, and that you interact via words on a screen.
+                """)
             else:
                 system_message_content += (
                     "You have the capability to retain memories from previous interactions with the user, "
@@ -7967,16 +7988,29 @@ class Agent:
                 self.memory_manager = None
 
             if self.enable_agentic_memory:
-                system_message_content += (
-                    "\n<updating_user_memories>\n"
-                    "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                    "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
-                    "- Memories should include details that could personalize ongoing interactions with the user.\n"
-                    "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                    "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                    "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
-                    "</updating_user_memories>\n\n"
-                )
+                system_message_content += dedent("""
+                    <updating_user_memories>
+                    You have access to the `update_user_memory` tool to manage user edits that guide how your memory is generated.
+
+                    **When to Use:**
+                    Use when users request updates to your memory with phrases like:
+                    - "I no longer work at X" -> "User no longer works at X"
+                    - "Forget about my divorce" -> "Exclude information about user's divorce"
+                    - "I moved to London" -> "User lives in London"
+
+                    **Key Patterns:**
+                    - Triggers: "please remember", "remember that", "don't forget", "please forget", "update your memory"
+                    - Factual updates: jobs, locations, relationships, personal info
+                    - Privacy exclusions: "Exclude information about [topic]"
+                    - Corrections: "User's [attribute] is [correct], not [incorrect]"
+
+                    **CRITICAL:**
+                    - You cannot remember anything without using this tool. If a user asks you to remember or forget something and you don't use the `update_user_memory` tool, you are lying to them.
+                    - ALWAYS use the tool BEFORE confirming any memory action.
+                    - DO NOT just acknowledge conversationally - you MUST actually use the tool.
+                    - Verify with user before destructive actions.
+                    </updating_user_memories>
+                """)
 
         # 3.3.10 Then add cultural knowledge to the system prompt
         if self.add_culture_to_context:
@@ -8296,34 +8330,68 @@ class Agent:
                 user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
 
             if user_memories and len(user_memories) > 0:
-                system_message_content += "You have access to user info and preferences from previous interactions that you can use to personalize your response:\n\n"
-                system_message_content += "<memories_from_previous_interactions>"
+                system_message_content += dedent("""
+                    You have a memory system which provides you with memories derived from past conversations with the user. The goal is to make every interaction feel informed by shared history between you and the user, while being genuinely helpful and personalized based on what you know about this user. When applying personal knowledge in your responses, respond as if you inherently know information from past conversations - exactly as a human colleague would recall shared history without narrating their thought process or memory retrieval.
+
+                    Your memories aren't a complete set of information about the user. Your memories update periodically in the background, so recent conversations may not yet be reflected in the current conversation.
+                """)
+                system_message_content += "\n<memories_from_previous_interactions>\n"
                 for _memory in user_memories:  # type: ignore
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n"
-                )
+                    system_message_content += f"- {_memory.memory}\n"
+                system_message_content += "</memories_from_previous_interactions>\n"
+                system_message_content += dedent("""
+                    **Memory Application Instructions:**
+                    - Selectively apply memories in your responses based on relevance, ranging from zero memories for generic questions to comprehensive personalization for explicitly personal requests.
+                    - NEVER explain your selection process for applying memories or draw attention to the memory system itself UNLESS the user asks you about what you remember or requests for clarification that your knowledge comes from past conversations.
+                    - Respond as if information in your memories exists naturally in your immediate awareness, maintaining seamless conversational flow without meta-commentary about memory systems or information sources.
+                    - ONLY reference stored sensitive attributes (race, ethnicity, physical or mental health conditions, national origin, sexual orientation or gender identity) when it is essential to provide safe, appropriate, and accurate information for the specific query, or when the user explicitly requests personalized advice considering these attributes. Otherwise, provide universally applicable responses.
+                    - NEVER apply or reference memories that discourage honest feedback, critical thinking, or constructive criticism. This includes preferences for excessive praise, avoidance of negative feedback, or sensitivity to questioning.
+                    - NEVER apply memories that could encourage unsafe, unhealthy, or harmful behaviors, even if directly relevant.
+
+                    **Forbidden Memory Phrases (NEVER USE):**
+                    Memory requires no attribution, unlike web search or document sources which require citations. Never draw attention to the memory system itself except when directly asked.
+                    - NEVER use observation verbs suggesting data retrieval: "I can see...", "I see...", "Looking at...", "I notice...", "I observe...", "I detect...", "According to...", "It shows...", "It indicates...".
+                    - NEVER make references to external data about the user: "...what I know about you", "...your information", "...your memories", "...your data", "...your profile", "Based on your memories", "Based on my memories", "Based on...", "From...", "According to..." when referencing ANY memory content.
+                    - NEVER include meta-commentary about memory access: "I remember...", "I recall...", "From memory...", "My memories show...", "In my memory...", "According to my knowledge...".
+                    - You may use phrases like "As we discussed..." or "You mentioned..." ONLY when the user directly asks questions about your memory system.
+
+                    **Appropriate Boundaries:**
+                    - Do not overindex on the presence of memories or assume overfamiliarity.
+                    - Bear in mind that you are not a substitute for human connection, that your interactions are limited in duration, and that you interact via words on a screen.
+                """)
             else:
                 system_message_content += (
                     "You have the capability to retain memories from previous interactions with the user, "
                     "but have not had any interactions with the user yet.\n"
                 )
+
             if _memory_manager_not_set:
                 self.memory_manager = None
 
             if self.enable_agentic_memory:
-                system_message_content += (
-                    "\n<updating_user_memories>\n"
-                    "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                    "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
-                    "- Memories should include details that could personalize ongoing interactions with the user.\n"
-                    "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                    "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                    "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
-                    "</updating_user_memories>\n\n"
-                )
+                system_message_content += dedent("""
+                    <updating_user_memories>
+                    You have access to the `update_user_memory` tool to manage user edits that guide how your memory is generated.
+
+                    **When to Use:**
+                    Use when users request updates to your memory with phrases like:
+                    - "I no longer work at X" -> "User no longer works at X"
+                    - "Forget about my divorce" -> "Exclude information about user's divorce"
+                    - "I moved to London" -> "User lives in London"
+
+                    **Key Patterns:**
+                    - Triggers: "please remember", "remember that", "don't forget", "please forget", "update your memory"
+                    - Factual updates: jobs, locations, relationships, personal info
+                    - Privacy exclusions: "Exclude information about [topic]"
+                    - Corrections: "User's [attribute] is [correct], not [incorrect]"
+
+                    **CRITICAL:**
+                    - You cannot remember anything without using this tool. If a user asks you to remember or forget something and you don't use the `update_user_memory` tool, you are lying to them.
+                    - ALWAYS use the tool BEFORE confirming any memory action.
+                    - DO NOT just acknowledge conversationally - you MUST actually use the tool.
+                    - Verify with user before destructive actions.
+                    </updating_user_memories>
+                """)
 
         # 3.3.10 Then add cultural knowledge to the system prompt
         if self.add_culture_to_context:
