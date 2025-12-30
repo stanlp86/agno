@@ -8,8 +8,9 @@ from uuid import uuid4
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, logger
-
+# SURREALDB-MULTIUSER MODIFICATION: Add debug imports for enhanced logging
+from agno.utils.log import log_debug, log_info, debug_on, logger
+debug_on=True
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet
@@ -39,6 +40,9 @@ class FileGenerationTools(Toolkit):
         self.enable_txt_generation = enable_txt_generation
         self.output_directory = Path(output_directory) if output_directory else None
 
+        # SURREALDB-MULTIUSER MODIFICATION: Add diagnostic logging for debugging toolkit issues
+        print(f"[TOOLKIT DIAG] debug_on={debug_on}, logger={type(logger)}, logger.level={getattr(logger, 'level', 'N/A')}")
+        
         # Create output directory if specified
         if self.output_directory:
             self.output_directory.mkdir(parents=True, exist_ok=True)
@@ -66,14 +70,16 @@ class FileGenerationTools(Toolkit):
             return None
 
         file_path = self.output_directory / filename
-
+        # SURREALDB-MULTIUSER MODIFICATION: Create parent directories to handle session_id/run_id subdirs
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")
         else:
             file_path.write_bytes(content)
 
         log_debug(f"File saved to: {file_path}")
-        return str(file_path)
+        # SURREALDB-MULTIUSER MODIFICATION: Return Path object instead of string for better API consistency
+        return file_path
 
     def generate_json_file(self, data: Union[Dict, List, str], filename: Optional[str] = None) -> ToolResult:
         """Generate a JSON file from the provided data.
@@ -128,7 +134,8 @@ class FileGenerationTools(Toolkit):
             else:
                 success_msg += " File is available in response."
 
-            return ToolResult(content=success_msg, files=[file_artifact])
+            # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
+            return ToolResult(content=success_msg, files=[])
 
         except Exception as e:
             logger.error(f"Failed to generate JSON file: {e}")
@@ -217,7 +224,8 @@ class FileGenerationTools(Toolkit):
             else:
                 success_msg += " File is available in response."
 
-            return ToolResult(content=success_msg, files=[file_artifact])
+            # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
+            return ToolResult(content=success_msg, files=[])
 
         except Exception as e:
             logger.error(f"Failed to generate CSV file: {e}")
@@ -286,7 +294,9 @@ class FileGenerationTools(Toolkit):
             # Create FileArtifact
             file_artifact = File(
                 id=str(uuid4()),
-                content=pdf_content,
+                # SURREALDB-MULTIUSER MODIFICATION: Omit PDF content to reduce memory usage
+                # content=pdf_content,
+                content=b'Content omitted due to size constraints.',
                 mime_type="application/pdf",
                 file_type="pdf",
                 filename=filename,
@@ -301,7 +311,8 @@ class FileGenerationTools(Toolkit):
             else:
                 success_msg += " File is available in response."
 
-            return ToolResult(content=success_msg, files=[file_artifact])
+            # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
+            return ToolResult(content=success_msg, files=[])
 
         except Exception as e:
             logger.error(f"Failed to generate PDF file: {e}")
@@ -319,12 +330,40 @@ class FileGenerationTools(Toolkit):
         """
         try:
             log_debug(f"Generating text file with content length: {len(content)}")
-
-            # Generate filename if not provided
+ 
+            # SURREALDB-MULTIUSER MODIFICATION: Enhanced filename handling with better suffix detection
             if not filename:
                 filename = f"generated_file_{str(uuid4())[:8]}.txt"
-            elif not filename.endswith(".txt"):
+            elif not Path(filename).suffix:
                 filename += ".txt"
+            
+            # SURREALDB-MULTIUSER MODIFICATION: Add comprehensive file type detection function
+            def _get_file_info(filename: str) -> tuple:
+                """Return (mime_type, file_type) based on filename extension."""
+                extension_map = {
+                    '.py': ('text/x-python', 'py'),
+                    '.md': ('text/md', 'md'),
+                    '.txt': ('text/plain', 'txt'),
+                    '.json': ('application/json', 'json'),
+                    '.csv': ('text/csv', 'csv'),
+                    '.xml': ('text/xml', 'xml'),
+                    '.html': ('text/html', 'html'),
+                    '.css': ('text/css', 'css'),
+                    '.js': ('text/javascript', 'js'),
+                    '.yaml': ('text/plain', 'yaml'),
+                    '.yml': ('text/plain', 'yml'),
+                    '.toml': ('text/plain', 'toml'),
+                    '.sh': ('text/plain', 'sh'),
+                    '.sql': ('text/plain', 'sql'),
+                    '.rst': ('text/plain', 'rst'),
+                }
+                
+                suffix = Path(filename).suffix.lower()
+                return extension_map.get(suffix, ('text/plain', 'txt'))
+                
+            # SURREALDB-MULTIUSER MODIFICATION: Use dynamic file type detection
+            # Get appropriate mime_type and file_type
+            mime_type, file_type = _get_file_info(filename)
 
             # Save file to disk (if output_directory is set)
             file_path = self._save_file_to_disk(content, filename)
@@ -335,9 +374,11 @@ class FileGenerationTools(Toolkit):
             file_artifact = File(
                 id=str(uuid4()),
                 content=content_bytes,
-                mime_type="text/plain",
-                file_type="txt",
-                filename=filename,
+                # SURREALDB-MULTIUSER MODIFICATION: Use dynamic mime types and file types
+                mime_type=mime_type,
+                file_type=file_type,
+                # SURREALDB-MULTIUSER MODIFICATION: Use just filename, not full path
+                filename=Path(filename).name,
                 size=len(content_bytes),
                 filepath=file_path if file_path else None,
             )
@@ -349,7 +390,8 @@ class FileGenerationTools(Toolkit):
             else:
                 success_msg += " File is available in response."
 
-            return ToolResult(content=success_msg, files=[file_artifact])
+            # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
+            return ToolResult(content=success_msg, files=[])
 
         except Exception as e:
             logger.error(f"Failed to generate text file: {e}")
