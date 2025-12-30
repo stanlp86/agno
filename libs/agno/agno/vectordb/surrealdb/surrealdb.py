@@ -14,6 +14,9 @@ except ImportError as e:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
+# SURREALDB-MULTIUSER MODIFICATION: Add knowledge management imports
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.surrealdb.models import serialize_knowledge_row, deserialize_knowledge_row
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -295,6 +298,26 @@ class SurrealDb(VectorDb):
                 data["meta_data"].update(filters)
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
             self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
+
+    # SURREALDB-MULTIUSER MODIFICATION: Add custom knowledge content upsert method
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow) -> Optional[KnowledgeRow]:
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
+        knowledge_table_name = self._get_table("knowledge")
+        record = RecordID(knowledge_table_name, knowledge_row.id)
+        query = "UPSERT ONLY $record CONTENT $content"
+        result = self._query_one(
+            query, {"record": record, "content": serialize_knowledge_row(knowledge_row, knowledge_table_name)}, dict
+        )
+        return deserialize_knowledge_row(result) if result else None
+
+    # SURREALDB-MULTIUSER MODIFICATION: End of custom knowledge management addition
 
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
