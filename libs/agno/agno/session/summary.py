@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from os import getenv
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
@@ -8,8 +9,12 @@ from pydantic import BaseModel, Field
 from agno.models.base import Model
 from agno.models.utils import get_model
 from agno.run.agent import Message
-from agno.utils.log import log_debug, log_warning
-
+from agno.utils.log import (
+    log_debug,
+    log_warning,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+)
 # TODO: Look into moving all managers into a separate dir
 if TYPE_CHECKING:
     from agno.session import Session
@@ -72,6 +77,17 @@ class SessionSummaryManager:
 
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
+
+    # Debug mode for verbose logging
+    debug_mode: bool = False
+
+    def set_log_level(self):
+        """Set log level based on debug_mode or AGNO_DEBUG environment variable."""
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            self.debug_mode = True
+            set_log_level_to_debug()
+        else:
+            set_log_level_to_info()
 
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:
@@ -213,6 +229,7 @@ class SessionSummaryManager:
         session: Union["AgentSession", "TeamSession"],
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
+        self.set_log_level()
         log_debug("Creating session summary", center=True)
         self.model = get_model(self.model)
         if self.model is None:
@@ -241,6 +258,7 @@ class SessionSummaryManager:
         session: Union["AgentSession", "TeamSession"],
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
+        self.set_log_level()
         log_debug("Creating session summary", center=True)
         self.model = get_model(self.model)
         if self.model is None:

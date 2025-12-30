@@ -547,7 +547,8 @@ class Agent:
         add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
-        telemetry: bool = True,
+        # SURREALDB-MULTIUSER MODIFICATION: Match class attribute default
+        telemetry: bool = False,
     ):
         self.model = model  # type: ignore[assignment]
         self.name = name
