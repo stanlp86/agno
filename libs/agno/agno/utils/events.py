@@ -103,6 +103,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -129,6 +130,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -544,6 +546,7 @@ def create_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -560,6 +563,7 @@ def create_team_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 

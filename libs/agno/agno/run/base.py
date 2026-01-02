@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.filters import FilterExpr
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
@@ -41,6 +41,7 @@ class BaseRunOutputEvent:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "citations",
                 "member_responses",
@@ -96,6 +97,14 @@ class BaseRunOutputEvent:
                     _dict["audio"].append(aud.to_dict())
                 else:
                     _dict["audio"].append(aud)
+
+        if hasattr(self, "files") and self.files is not None:
+            _dict["files"] = []
+            for f in self.files:
+                if isinstance(f, File):
+                    _dict["files"].append(f.to_dict())
+                else:
+                    _dict["files"].append(f)
 
         if hasattr(self, "response_audio") and self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
