@@ -11180,10 +11180,47 @@ class Agent:
         # Save session to memory
         await self.asave_session(session=session)
 
+    def _attach_media_to_last_assistant_message(self, run_response: RunOutput) -> None:
+        """
+        Attach files/images/videos/audio from run_response to the last assistant message.
+        This ensures media from tool results is persisted with the message for later retrieval.
+        Tool messages (role="tool") are skipped by get_chat_history(), so we attach to assistant.
+        """
+        if not run_response.messages:
+            return
+
+        has_media = run_response.files or run_response.images or run_response.videos or run_response.audio
+        if not has_media:
+            return
+
+        # Find the last assistant message and attach media
+        for msg in reversed(run_response.messages):
+            if msg.role == "assistant":
+                if run_response.files:
+                    if msg.files is None:
+                        msg.files = []
+                    msg.files.extend(run_response.files)
+                if run_response.images:
+                    if msg.images is None:
+                        msg.images = []
+                    msg.images.extend(run_response.images)
+                if run_response.videos:
+                    if msg.videos is None:
+                        msg.videos = []
+                    msg.videos.extend(run_response.videos)
+                if run_response.audio:
+                    if msg.audio is None:
+                        msg.audio = []
+                    msg.audio.extend(run_response.audio)
+                break
+
     def _scrub_run_output_for_storage(self, run_response: RunOutput) -> None:
         """
         Scrub run output based on storage flags before persisting to database.
         """
+        # First attach media to messages so it can be persisted (or scrubbed if store_media=False)
+        self._attach_media_to_last_assistant_message(run_response)
+
         if not self.store_media:
             scrub_media_from_run_output(run_response)
 
