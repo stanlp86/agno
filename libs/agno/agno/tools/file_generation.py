@@ -135,7 +135,7 @@ class FileGenerationTools(Toolkit):
                 success_msg += " File is available in response."
 
             # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
-            return ToolResult(content=success_msg, files=[])
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate JSON file: {e}")
@@ -225,7 +225,7 @@ class FileGenerationTools(Toolkit):
                 success_msg += " File is available in response."
 
             # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
-            return ToolResult(content=success_msg, files=[])
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate CSV file: {e}")
@@ -312,7 +312,7 @@ class FileGenerationTools(Toolkit):
                 success_msg += " File is available in response."
 
             # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
-            return ToolResult(content=success_msg, files=[])
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate PDF file: {e}")
@@ -391,7 +391,7 @@ class FileGenerationTools(Toolkit):
                 success_msg += " File is available in response."
 
             # SURREALDB-MULTIUSER MODIFICATION: Return empty files array to prevent duplicate file handling
-            return ToolResult(content=success_msg, files=[])
+            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate text file: {e}")
