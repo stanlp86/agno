@@ -122,7 +122,7 @@ class FileGenerationTools(Toolkit):
                 content=content_bytes,
                 mime_type="application/json",
                 file_type="json",
-                filename=filename,
+                filename=Path(filename).name,
                 size=len(content_bytes),
                 filepath=file_path if file_path else None,
             )
@@ -212,7 +212,7 @@ class FileGenerationTools(Toolkit):
                 content=content_bytes,
                 mime_type="text/csv",
                 file_type="csv",
-                filename=filename,
+                filename=Path(filename).name,
                 size=len(content_bytes),
                 filepath=file_path if file_path else None,
             )
@@ -294,12 +294,10 @@ class FileGenerationTools(Toolkit):
             # Create FileArtifact
             file_artifact = File(
                 id=str(uuid4()),
-                # SURREALDB-MULTIUSER MODIFICATION: Omit PDF content to reduce memory usage
-                # content=pdf_content,
-                content=b'Content omitted due to size constraints.',
+                content=pdf_content,
                 mime_type="application/pdf",
                 file_type="pdf",
-                filename=filename,
+                filename=Path(filename).name,
                 size=len(pdf_content),
                 filepath=file_path if file_path else None,
             )
