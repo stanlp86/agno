@@ -24,7 +24,7 @@ class FileTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
+        self.base_dir: Path = Path(base_dir) or Path.cwd()
         self.base_dir = self.base_dir.resolve()
 
         tools: List[Any] = []
