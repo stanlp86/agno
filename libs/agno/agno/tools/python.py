@@ -20,7 +20,7 @@ class PythonTools(Toolkit):
         safe_locals: Optional[dict] = None,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
+        self.base_dir: Path = Path(base_dir) or Path.cwd()
 
         # Restricted global and local scope
         self.safe_globals: dict = safe_globals or globals()
