@@ -256,7 +256,7 @@ def show(
 
 @app.command()
 def render(
-    name: str = typer.Argument(..., help="Prompt name"),
+    prompt_name: str = typer.Argument(..., help="Prompt name"),
     var: List[str] = typer.Option([], "--var", "-V", help="Variable in key=value format"),
     version: Optional[int] = typer.Option(None, "--version", "-v"),
     snapshot_name: Optional[str] = typer.Option(None, "--snapshot", "-s"),
@@ -276,7 +276,7 @@ def render(
 
     try:
         result = manager.render(
-            name=name,
+            prompt_name=prompt_name,
             version=version,
             snapshot_name=snapshot_name,
             **variables,

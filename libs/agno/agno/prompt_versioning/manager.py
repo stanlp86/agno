@@ -501,7 +501,7 @@ class PromptManager:
     def render(
         self,
         prompt_id: Optional[str] = None,
-        name: Optional[str] = None,
+        prompt_name: Optional[str] = None,
         version: Optional[int] = None,
         snapshot_name: Optional[str] = None,
         **variables: Any,
@@ -509,13 +509,13 @@ class PromptManager:
         """
         Render a prompt template with variables.
 
-        Provide one of: prompt_id, name (with optional version), or name with snapshot_name.
+        Provide one of: prompt_id, prompt_name (with optional version), or prompt_name with snapshot_name.
 
         Args:
             prompt_id: Direct prompt ID
-            name: Prompt name
-            version: Version number (used with name)
-            snapshot_name: Snapshot name (used with name)
+            prompt_name: Prompt name (use this instead of 'name' to avoid conflicts with template variables)
+            version: Version number (used with prompt_name)
+            snapshot_name: Snapshot name (used with prompt_name)
             **variables: Variables to substitute in template
 
         Returns:
@@ -523,7 +523,7 @@ class PromptManager:
 
         Example:
             >>> result = manager.render(
-            ...     name="greeting",
+            ...     prompt_name="greeting",
             ...     snapshot_name="production-v1",
             ...     name="Alice",
             ...     app="Agno"
@@ -533,10 +533,10 @@ class PromptManager:
 
         if prompt_id:
             prompt = self.get(prompt_id)
-        elif name and snapshot_name:
-            prompt = self.get_snapshot(name, snapshot_name)
-        elif name:
-            prompt = self.get_by_name(name, version)
+        elif prompt_name and snapshot_name:
+            prompt = self.get_snapshot(prompt_name, snapshot_name)
+        elif prompt_name:
+            prompt = self.get_by_name(prompt_name, version)
 
         if prompt is None:
             raise ValueError("Prompt not found")
