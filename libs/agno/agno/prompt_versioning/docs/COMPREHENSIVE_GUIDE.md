@@ -1143,6 +1143,217 @@ manager.search(tags=["domain:customer", "channel:email"])
 
 ---
 
+## SystemPromptEditor
+
+For agent system prompts, `SystemPromptEditor` provides component-based versioning with Agent integration.
+
+### Overview
+
+System prompts are composed of components (role, instructions, etc.) that can be individually versioned and edited.
+
+```python
+from agno.prompt_versioning import (
+    SystemPromptEditor,
+    PromptComponentType,
+    SystemPromptComponent,
+)
+
+editor = SystemPromptEditor(tracking_uri="mlruns")
+```
+
+### Component Types
+
+| Type | Description | Default XML Tag |
+|------|-------------|-----------------|
+| `DESCRIPTION` | Agent description | None |
+| `ROLE` | Agent role | `<your_role>` |
+| `INSTRUCTIONS` | Behavioral instructions | `<instructions>` |
+| `TOOL_INSTRUCTIONS` | Tool usage guidance | None |
+| `EXPECTED_OUTPUT` | Output format | `<expected_output>` |
+| `ADDITIONAL_INFO` | Extra information | `<additional_information>` |
+| `ADDITIONAL_CONTEXT` | Context | None |
+| `MEMORIES` | User memories | `<memories_from_previous_interactions>` |
+| `SESSION_SUMMARY` | Session summary | `<summary_of_previous_interactions>` |
+| `CULTURAL_KNOWLEDGE` | Cultural knowledge | `<cultural_knowledge>` |
+| `SESSION_STATE` | Runtime state | `<session_state>` |
+| `CUSTOM` | Custom (requires name) | User-defined |
+
+### Creating System Prompts
+
+```python
+# Create with components
+prompt = editor.create(
+    name="support_agent",
+    components=[
+        SystemPromptComponent(
+            type=PromptComponentType.ROLE,
+            content="You are a helpful customer support specialist.",
+            xml_tag="your_role",
+            order=20,
+        ),
+        SystemPromptComponent(
+            type=PromptComponentType.INSTRUCTIONS,
+            content="- Always respond with empathy\n- Provide clear solutions",
+            xml_tag="instructions",
+            order=30,
+        ),
+    ],
+    author="team@company.com",
+    tags=["support", "production"],
+)
+```
+
+### Editing Components
+
+```python
+# Edit a specific component (creates new version)
+updated = editor.edit_component(
+    prompt_id=prompt.id,
+    component_type=PromptComponentType.ROLE,
+    new_content="You are an expert technical support specialist.",
+    author="alice@company.com",
+    change_description="Updated role for technical support focus",
+)
+
+# Add a new component
+with_guardrails = editor.add_component(
+    prompt_id=updated.id,
+    component=SystemPromptComponent(
+        type=PromptComponentType.CUSTOM,
+        name="guardrails",
+        content="Never share internal pricing or roadmap.",
+        order=25,
+        xml_tag="guardrails",
+    ),
+    change_description="Added safety guardrails",
+)
+
+# Remove a component
+without_guardrails = editor.remove_component(
+    prompt_id=with_guardrails.id,
+    component_type=PromptComponentType.CUSTOM,
+    component_name="guardrails",
+)
+
+# Reorder components
+reordered = editor.reorder_components(
+    prompt_id=prompt.id,
+    component_order={
+        PromptComponentType.INSTRUCTIONS: 15,  # Before role
+        PromptComponentType.ROLE: 25,
+    },
+)
+```
+
+### Agent Integration
+
+```python
+from agno.agent import Agent
+
+# Create agent
+agent = Agent(
+    name="support",
+    role="Customer support specialist",
+    instructions=["Be helpful", "Be concise"],
+    expected_output="Clear, actionable responses",
+)
+
+# Extract agent config to versioned prompt
+prompt = editor.create_from_agent(
+    name="support_v1",
+    agent=agent,
+    author="team@company.com",
+    tags=["support"],
+)
+
+# Apply versioned prompt back to agent
+editor.apply_to_agent(
+    prompt_id=prompt.id,
+    agent=agent,
+    override_system_message=False,  # Set individual attributes
+)
+
+# Or override system_message directly
+editor.apply_to_agent(
+    prompt_id=prompt.id,
+    agent=agent,
+    override_system_message=True,  # Set composed prompt
+)
+```
+
+### Preview and Composition
+
+```python
+# Preview single component
+role_content = editor.preview_component(
+    prompt_id=prompt.id,
+    component_type=PromptComponentType.ROLE,
+    include_xml_tag=True,
+)
+
+# Preview all components as dict
+previews = editor.preview_components(
+    prompt_id=prompt.id,
+    include_only=[PromptComponentType.ROLE, PromptComponentType.INSTRUCTIONS],
+)
+for name, content in previews.items():
+    print(f"--- {name} ---")
+    print(content)
+
+# Compose full prompt (with variable substitution)
+full_prompt = editor.compose(prompt_id=prompt.id, user_name="Alice")
+```
+
+### Export and Documentation
+
+```python
+# Export as markdown for documentation
+markdown = editor.export_as_markdown(
+    prompt_id=prompt.id,
+    include_metadata=True,
+    include_history=True,
+)
+
+with open("prompt_doc.md", "w") as f:
+    f.write(markdown)
+```
+
+### Search and Filter
+
+```python
+# Search system prompts
+results = editor.search(
+    name_pattern="support",
+    tags=["production"],
+    author="alice@company.com",
+    component_types=[PromptComponentType.ROLE],
+    model_compatibility=["gpt-4"],
+)
+
+# Get prompts compatible with a model
+gpt4_prompts = editor.get_agent_compatible_versions("gpt-4")
+```
+
+### Versioning Operations
+
+SystemPromptEditor supports all standard versioning operations:
+
+```python
+# Snapshot for production
+prod = editor.snapshot(prompt.id, "prod-v1", "Production release")
+
+# Fork for experimentation
+variant = editor.fork(prompt.id, "support_experimental")
+
+# Compare versions
+diff = editor.compare(prompt.id, updated.id)
+print(f"Components changed: {diff.components_changed}")
+print(f"Components added: {diff.components_added}")
+print(f"Change description: {diff.change_description}")
+```
+
+---
+
 ## Appendix: Complete API Reference
 
 ### PromptManager Methods
@@ -1168,3 +1379,34 @@ manager.search(tags=["domain:customer", "channel:email"])
 | `activate(id)` | `PromptVersion` | Set ACTIVE |
 | `archive(id)` | `PromptVersion` | Set ARCHIVED |
 | `export_lineage(name)` | `Dict` | Export JSON |
+| `create_system_prompt(...)` | `PromptVersion` | Create component-based prompt |
+| `edit_component(...)` | `PromptVersion` | Edit single component |
+| `add_component(...)` | `PromptVersion` | Add component |
+| `remove_component(...)` | `PromptVersion` | Remove component |
+| `reorder_components(...)` | `PromptVersion` | Change component order |
+| `get_components(id)` | `List[SystemPromptComponent]` | Get components |
+| `search_system_prompts(...)` | `List[PromptVersion]` | Search system prompts |
+
+### SystemPromptEditor Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `create(...)` | `PromptVersion` | Create system prompt |
+| `edit_component(...)` | `PromptVersion` | Edit component |
+| `add_component(...)` | `PromptVersion` | Add component |
+| `remove_component(...)` | `PromptVersion` | Remove component |
+| `reorder_components(...)` | `PromptVersion` | Reorder components |
+| `get(id)` | `PromptVersion?` | Get by ID |
+| `get_by_name(name, version?)` | `PromptVersion?` | Get by name |
+| `get_components(id)` | `List[SystemPromptComponent]` | Get components |
+| `snapshot(...)` | `PromptVersion` | Create snapshot |
+| `fork(...)` | `PromptVersion` | Fork prompt |
+| `compare(...)` | `PromptDiff` | Compare versions |
+| `search(...)` | `List[PromptVersion]` | Search system prompts |
+| `create_from_agent(...)` | `PromptVersion` | Extract from Agent |
+| `apply_to_agent(...)` | `None` | Apply to Agent |
+| `compose(id, **vars)` | `str` | Render full prompt |
+| `preview_component(...)` | `str` | Preview single component |
+| `preview_components(...)` | `Dict[str, str]` | Preview all components |
+| `get_agent_compatible_versions(model)` | `List[PromptVersion]` | Get compatible prompts |
+| `export_as_markdown(...)` | `str` | Export as markdown |

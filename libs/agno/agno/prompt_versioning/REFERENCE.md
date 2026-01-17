@@ -712,6 +712,144 @@ Respond in {{language}} with a {{tone}} tone.
 
 ---
 
+## Component-Based System Prompts
+
+For agent system prompts, use component-based versioning with `SystemPromptEditor`.
+
+### PromptComponentType
+
+```python
+from agno.prompt_versioning import PromptComponentType
+
+PromptComponentType.DESCRIPTION        # Agent description
+PromptComponentType.ROLE               # Agent role (<your_role>)
+PromptComponentType.INSTRUCTIONS       # Instructions (<instructions>)
+PromptComponentType.TOOL_INSTRUCTIONS  # Tool usage guidance
+PromptComponentType.EXPECTED_OUTPUT    # Expected output format
+PromptComponentType.ADDITIONAL_INFO    # Additional information
+PromptComponentType.ADDITIONAL_CONTEXT # Additional context
+PromptComponentType.MEMORIES           # User memories
+PromptComponentType.SESSION_SUMMARY    # Session summary
+PromptComponentType.CULTURAL_KNOWLEDGE # Cultural knowledge
+PromptComponentType.SESSION_STATE      # Runtime session state
+PromptComponentType.CUSTOM             # Custom component (requires name)
+```
+
+### SystemPromptComponent
+
+```python
+SystemPromptComponent(
+    type: PromptComponentType,     # Component type
+    content: str,                  # Component content
+    name: str = None,              # Required for CUSTOM type
+    order: int = 50,               # Render order (0-100)
+    xml_tag: str = None,           # XML wrapper tag
+    enabled: bool = True,          # Include in composition
+    metadata: Dict = {}            # Component-specific metadata
+)
+```
+
+### SystemPromptEditor
+
+```python
+from agno.prompt_versioning import SystemPromptEditor, PromptComponentType, SystemPromptComponent
+
+editor = SystemPromptEditor(tracking_uri="mlruns")
+```
+
+#### Create System Prompt
+
+```python
+prompt = editor.create("agent_prompt", [
+    SystemPromptComponent(
+        type=PromptComponentType.ROLE,
+        content="You are a helpful assistant.",
+        xml_tag="your_role"
+    ),
+    SystemPromptComponent(
+        type=PromptComponentType.INSTRUCTIONS,
+        content="- Be concise\n- Be accurate",
+        xml_tag="instructions"
+    ),
+])
+```
+
+#### Edit Component
+
+```python
+updated = editor.edit_component(
+    prompt.id,
+    PromptComponentType.ROLE,
+    "You are an expert programmer.",
+    change_description="Updated role for coding tasks"
+)
+```
+
+#### Add/Remove Components
+
+```python
+# Add component
+editor.add_component(prompt.id, SystemPromptComponent(
+    type=PromptComponentType.CUSTOM,
+    name="guardrails",
+    content="Never share internal data.",
+    order=25
+))
+
+# Remove component
+editor.remove_component(prompt.id, PromptComponentType.CUSTOM, component_name="guardrails")
+```
+
+#### Reorder Components
+
+```python
+editor.reorder_components(prompt.id, {
+    PromptComponentType.INSTRUCTIONS: 15,  # Move before role
+    PromptComponentType.ROLE: 25,
+})
+```
+
+#### Agent Integration
+
+```python
+from agno.agent import Agent
+
+# Extract from agent
+agent = Agent(role="Helper", instructions=["Be nice"])
+prompt = editor.create_from_agent("my_agent", agent)
+
+# Apply to agent
+editor.apply_to_agent(prompt.id, agent)
+```
+
+#### Preview and Export
+
+```python
+# Preview single component
+content = editor.preview_component(prompt.id, PromptComponentType.ROLE)
+
+# Preview all components
+previews = editor.preview_components(prompt.id)
+
+# Compose full prompt
+full_prompt = editor.compose(prompt.id)
+
+# Export as markdown
+markdown = editor.export_as_markdown(prompt.id)
+```
+
+#### Search System Prompts
+
+```python
+results = editor.search(
+    tags=["production"],
+    component_types=[PromptComponentType.ROLE],
+    model_compatibility=["gpt-4"]
+)
+```
+
+---
+
 ## Storage Structure
 
 ```
