@@ -18,12 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from agno.prompt_versioning.models import (
+    PromptComponentType,
     PromptDiff,
     PromptLineage,
     PromptMetadata,
     PromptStatus,
     PromptTemplate,
     PromptVersion,
+    SystemPromptComponent,
 )
 
 try:
@@ -115,8 +117,13 @@ class MLflowPromptStore:
         return exp_id
 
     def _prompt_to_artifact(self, prompt: PromptVersion) -> Dict[str, Any]:
-        """Convert prompt to artifact dict."""
-        return {
+        """
+        Convert prompt to artifact dict.
+
+        Includes component serialization for system prompts.
+        Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 5.2
+        """
+        data = {
             "id": prompt.id,
             "name": prompt.name,
             "version": prompt.version,
@@ -132,8 +139,30 @@ class MLflowPromptStore:
             "content_hash": prompt.content_hash,
         }
 
+        # Include components if present (system prompts)
+        if prompt.components:
+            data["components"] = [c.model_dump() for c in prompt.components]
+
+        # Include change description for traceability
+        if prompt.change_description:
+            data["change_description"] = prompt.change_description
+
+        return data
+
     def _artifact_to_prompt(self, data: Dict[str, Any]) -> PromptVersion:
-        """Convert artifact dict to prompt."""
+        """
+        Convert artifact dict to prompt.
+
+        Includes component deserialization for system prompts.
+        Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 5.2
+        """
+        # Load components if present
+        components = None
+        if "components" in data and data["components"]:
+            components = [
+                SystemPromptComponent(**c) for c in data["components"]
+            ]
+
         return PromptVersion(
             id=data["id"],
             name=data["name"],
@@ -146,6 +175,8 @@ class MLflowPromptStore:
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
             snapshot_name=data.get("snapshot_name"),
+            components=components,
+            change_description=data.get("change_description"),
         )
 
     def save(self, prompt: PromptVersion) -> str:

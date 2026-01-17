@@ -2,18 +2,23 @@
 High-level Prompt Manager for versioning, snapshots, editing, and forking.
 
 This is the main API for interacting with the prompt versioning system.
+Supports both traditional prompts and component-based system prompts.
+
+Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 4.1
 """
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from agno.prompt_versioning.models import (
+    PromptComponentType,
     PromptDiff,
     PromptLineage,
     PromptMetadata,
     PromptStatus,
     PromptTemplate,
     PromptVersion,
+    SystemPromptComponent,
 )
 from agno.prompt_versioning.mlflow_backend import (
     MLflowPromptStore,
@@ -314,6 +319,14 @@ class PromptManager:
             metadata.author = author
         metadata.add_tag("forked")
 
+        # Deep copy components if present (for system prompts)
+        components = None
+        if existing.components:
+            components = [
+                SystemPromptComponent(**c.model_dump())
+                for c in existing.components
+            ]
+
         fork = PromptVersion(
             id=new_id,
             name=new_name,
@@ -322,6 +335,7 @@ class PromptManager:
             status=PromptStatus.DRAFT,
             metadata=metadata,
             forked_from=existing.id,
+            components=components,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
@@ -602,3 +616,457 @@ class PromptManager:
             "snapshots": lineage.snapshots,
             "forks": lineage.forks,
         }
+
+    # =========================================================================
+    # SYSTEM PROMPT COMPONENT METHODS
+    # Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 4.1
+    # =========================================================================
+
+    def create_system_prompt(
+        self,
+        name: str,
+        components: List[SystemPromptComponent],
+        description: Optional[str] = None,
+        author: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        model_compatibility: Optional[List[str]] = None,
+    ) -> PromptVersion:
+        """
+        Create a new system prompt from components.
+
+        Args:
+            name: Unique prompt name
+            components: List of SystemPromptComponent objects
+            description: Human-readable description
+            author: Author name
+            tags: Tags for categorization
+            model_compatibility: Compatible models
+
+        Returns:
+            Created PromptVersion with components
+
+        Raises:
+            ValueError: If duplicate non-CUSTOM component types
+
+        Example:
+            >>> components = [
+            ...     SystemPromptComponent(
+            ...         type=PromptComponentType.ROLE,
+            ...         content="You are a helpful assistant.",
+            ...         xml_tag="your_role"
+            ...     ),
+            ...     SystemPromptComponent(
+            ...         type=PromptComponentType.INSTRUCTIONS,
+            ...         content="Be concise and accurate.",
+            ...         xml_tag="instructions"
+            ...     ),
+            ... ]
+            >>> prompt = manager.create_system_prompt("my_agent", components)
+        """
+        # Validate no duplicate non-CUSTOM components
+        self._validate_components(components)
+
+        # Compose content from components
+        content = self._compose_components(components)
+
+        # Build tags including system_prompt marker
+        # Note: Using underscores instead of colons to avoid MLflow search syntax issues
+        all_tags = list(tags or [])
+        all_tags.append("system_prompt")
+        for comp in components:
+            if comp.type == PromptComponentType.CUSTOM:
+                all_tags.append(f"component_custom_{comp.name}")
+            else:
+                all_tags.append(f"component_{comp.type.value}")
+
+        # Create version with components
+        prompt_id = generate_prompt_id()
+        version_num = self.store.get_next_version(name)
+
+        version = PromptVersion(
+            id=prompt_id,
+            name=name,
+            version=version_num,
+            template=PromptTemplate(content=content),
+            status=PromptStatus.DRAFT,
+            metadata=PromptMetadata(
+                author=author,
+                description=description,
+                tags=all_tags,
+                model_compatibility=model_compatibility or [],
+            ),
+            components=components,
+        )
+
+        self.store.save(version)
+        return version
+
+    def edit_component(
+        self,
+        prompt_id: str,
+        component_type: PromptComponentType,
+        new_content: str,
+        component_name: Optional[str] = None,
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """
+        Edit a specific component, creating a new version.
+
+        Args:
+            prompt_id: ID of prompt to edit
+            component_type: Type of component to edit
+            new_content: New content
+            component_name: Required for CUSTOM type
+            author: Author of edit
+            change_description: Description of changes for traceability
+
+        Returns:
+            New PromptVersion with updated component
+
+        Raises:
+            ValueError: If prompt not found or not a system prompt
+
+        Note:
+            The change_description is stored in the new version for
+            full traceability and audit trail.
+
+        Example:
+            >>> updated = manager.edit_component(
+            ...     prompt_id,
+            ...     PromptComponentType.ROLE,
+            ...     "New role content",
+            ...     change_description="Updated role for premium support"
+            ... )
+        """
+        existing = self.get(prompt_id)
+        if existing is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not existing.is_system_prompt():
+            raise ValueError("Not a system prompt. Use edit() instead.")
+
+        # Deep copy components
+        components = [
+            SystemPromptComponent(**c.model_dump())
+            for c in existing.components
+        ]
+
+        # Find and update
+        found = False
+        for comp in components:
+            if comp.type == component_type:
+                if component_type == PromptComponentType.CUSTOM:
+                    if comp.name == component_name:
+                        comp.content = new_content
+                        found = True
+                        break
+                else:
+                    comp.content = new_content
+                    found = True
+                    break
+
+        if not found:
+            raise ValueError(f"Component not found: {component_type.value}")
+
+        # Create new version with change description
+        return self._create_component_version(
+            existing,
+            components=components,
+            author=author,
+            change_description=change_description
+        )
+
+    def add_component(
+        self,
+        prompt_id: str,
+        component: SystemPromptComponent,
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """
+        Add a new component to a system prompt.
+
+        Args:
+            prompt_id: ID of prompt to modify
+            component: Component to add
+            author: Author of change
+            change_description: Description of changes
+
+        Returns:
+            New PromptVersion with added component
+
+        Raises:
+            ValueError: If duplicate non-CUSTOM component type
+        """
+        existing = self.get(prompt_id)
+        if existing is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not existing.is_system_prompt():
+            raise ValueError("Not a system prompt")
+
+        # Check duplicates for non-CUSTOM
+        if component.type != PromptComponentType.CUSTOM:
+            for c in existing.components:
+                if c.type == component.type:
+                    raise ValueError(
+                        f"Component {component.type.value} already exists"
+                    )
+
+        components = list(existing.components) + [component]
+
+        desc = change_description or f"Added {component.type.value} component"
+        return self._create_component_version(
+            existing,
+            components=components,
+            author=author,
+            change_description=desc
+        )
+
+    def remove_component(
+        self,
+        prompt_id: str,
+        component_type: PromptComponentType,
+        component_name: Optional[str] = None,
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """
+        Remove a component from a system prompt.
+
+        Args:
+            prompt_id: ID of prompt to modify
+            component_type: Type of component to remove
+            component_name: Required for CUSTOM type
+            author: Author of change
+            change_description: Description of changes
+
+        Returns:
+            New PromptVersion without the component
+
+        Raises:
+            ValueError: If component not found
+        """
+        existing = self.get(prompt_id)
+        if existing is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not existing.is_system_prompt():
+            raise ValueError("Not a system prompt")
+
+        # Filter out component
+        if component_type == PromptComponentType.CUSTOM:
+            components = [
+                c for c in existing.components
+                if not (c.type == component_type and c.name == component_name)
+            ]
+        else:
+            components = [
+                c for c in existing.components
+                if c.type != component_type
+            ]
+
+        if len(components) == len(existing.components):
+            raise ValueError(f"Component not found: {component_type.value}")
+
+        desc = change_description or f"Removed {component_type.value} component"
+        return self._create_component_version(
+            existing,
+            components=components,
+            author=author,
+            change_description=desc
+        )
+
+    def reorder_components(
+        self,
+        prompt_id: str,
+        component_order: Dict[PromptComponentType, int],
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """
+        Change the order in which components are rendered.
+
+        Args:
+            prompt_id: ID of prompt to reorder
+            component_order: Dict mapping component types to new order values
+            author: Author of change
+            change_description: Description of reordering
+
+        Returns:
+            New PromptVersion with reordered components
+
+        Example:
+            >>> manager.reorder_components(
+            ...     prompt_id,
+            ...     {
+            ...         PromptComponentType.INSTRUCTIONS: 15,  # Move before role
+            ...         PromptComponentType.ROLE: 25,
+            ...     }
+            ... )
+        """
+        existing = self.get(prompt_id)
+        if existing is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not existing.is_system_prompt():
+            raise ValueError("Not a system prompt")
+
+        # Deep copy and update orders
+        components = []
+        for c in existing.components:
+            comp = SystemPromptComponent(**c.model_dump())
+            if c.type in component_order:
+                comp.order = component_order[c.type]
+            components.append(comp)
+
+        return self._create_component_version(
+            existing,
+            components=components,
+            author=author,
+            change_description=change_description or "Reordered components"
+        )
+
+    def get_components(self, prompt_id: str) -> List[SystemPromptComponent]:
+        """
+        Get components of a system prompt, sorted by order.
+
+        Args:
+            prompt_id: ID of prompt
+
+        Returns:
+            List of components sorted by order
+
+        Raises:
+            ValueError: If prompt not found or not a system prompt
+        """
+        prompt = self.get(prompt_id)
+        if prompt is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not prompt.is_system_prompt():
+            raise ValueError("Not a system prompt")
+
+        return sorted(prompt.components, key=lambda c: c.order)
+
+    def search_system_prompts(
+        self,
+        name_pattern: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        author: Optional[str] = None,
+        component_types: Optional[List[PromptComponentType]] = None,
+        model_compatibility: Optional[List[str]] = None,
+    ) -> List[PromptVersion]:
+        """
+        Search system prompts.
+
+        Args:
+            name_pattern: Pattern to match names
+            tags: Required tags (in addition to system_prompt)
+            author: Author filter
+            component_types: Filter by component types present
+            model_compatibility: Filter by compatible models
+
+        Returns:
+            Matching system prompts
+        """
+        search_tags = ["system_prompt"]
+        if tags:
+            search_tags.extend(tags)
+        if component_types:
+            for ct in component_types:
+                search_tags.append(f"component_{ct.value}")
+
+        results = self.search(
+            name_pattern=name_pattern,
+            tags=search_tags,
+            author=author,
+        )
+
+        # Additional filter by model compatibility if specified
+        if model_compatibility:
+            results = [
+                r for r in results
+                if any(m in r.metadata.model_compatibility for m in model_compatibility)
+            ]
+
+        return results
+
+    # =========================================================================
+    # PRIVATE HELPER METHODS
+    # =========================================================================
+
+    def _validate_components(
+        self,
+        components: List[SystemPromptComponent]
+    ) -> None:
+        """Validate no duplicate non-CUSTOM component types."""
+        seen = set()
+        for c in components:
+            if c.type != PromptComponentType.CUSTOM:
+                if c.type in seen:
+                    raise ValueError(f"Duplicate component: {c.type.value}")
+                seen.add(c.type)
+
+    def _compose_components(
+        self,
+        components: List[SystemPromptComponent]
+    ) -> str:
+        """Compose components into prompt content."""
+        sorted_comps = sorted(
+            [c for c in components if c.enabled],
+            key=lambda c: c.order
+        )
+
+        parts = []
+        for comp in sorted_comps:
+            content = comp.content
+            if comp.xml_tag:
+                content = f"<{comp.xml_tag}>\n{content}\n</{comp.xml_tag}>"
+            parts.append(content)
+
+        return "\n\n".join(parts)
+
+    def _create_component_version(
+        self,
+        existing: PromptVersion,
+        components: List[SystemPromptComponent],
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """Create new version from existing with updated components."""
+        content = self._compose_components(components)
+
+        # Update tags (using underscores to avoid MLflow search syntax issues)
+        tags = [t for t in existing.metadata.tags
+                if not t.startswith("component_")]
+        for comp in components:
+            if comp.type == PromptComponentType.CUSTOM:
+                tags.append(f"component_custom_{comp.name}")
+            else:
+                tags.append(f"component_{comp.type.value}")
+
+        new_version_num = self.store.get_next_version(existing.name)
+
+        new_version = PromptVersion(
+            id=generate_prompt_id(),
+            name=existing.name,
+            version=new_version_num,
+            template=PromptTemplate(content=content),
+            status=PromptStatus.DRAFT,
+            metadata=PromptMetadata(
+                author=author or existing.metadata.author,
+                description=existing.metadata.description,
+                tags=tags,
+                model_compatibility=existing.metadata.model_compatibility,
+                use_case=existing.metadata.use_case,
+                custom=existing.metadata.custom,
+            ),
+            parent_id=existing.id,
+            components=components,
+            change_description=change_description,
+        )
+
+        self.store.save(new_version)
+        return new_version

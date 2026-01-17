@@ -1,5 +1,16 @@
 """
 Pydantic models for prompt versioning system.
+
+This module provides the core data models for:
+- PromptTemplate: Template with variable substitution
+- PromptMetadata: Metadata for prompt versions
+- PromptVersion: Versioned prompt with lineage tracking
+- PromptDiff: Diff between prompt versions
+- PromptLineage: Full lineage/history of a prompt
+- PromptComponentType: Types of system prompt components
+- SystemPromptComponent: Individual component of a system prompt
+
+Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 3
 """
 
 import re
@@ -16,6 +27,136 @@ class PromptStatus(str, Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     SNAPSHOT = "snapshot"
+
+
+class PromptComponentType(str, Enum):
+    """
+    Enumeration of system prompt component types.
+
+    Maps to Agent.get_system_message() construction order.
+    Cross-ref: agent/agent.py lines 7742-8083
+
+    Order values (10, 20, 30...) allow insertion without renumbering.
+    """
+
+    # Core identity
+    DESCRIPTION = "description"           # Order: 10
+    ROLE = "role"                         # Order: 20
+
+    # Behavioral
+    INSTRUCTIONS = "instructions"         # Order: 30
+    TOOL_INSTRUCTIONS = "tool_instructions"  # Order: 40
+    EXPECTED_OUTPUT = "expected_output"   # Order: 50
+
+    # Context
+    ADDITIONAL_INFO = "additional_info"   # Order: 60
+    ADDITIONAL_CONTEXT = "additional_context"  # Order: 70
+
+    # Memory (memory/manager.py integration)
+    MEMORIES = "memories"                 # Order: 80
+    SESSION_SUMMARY = "session_summary"   # Order: 85
+
+    # Knowledge
+    CULTURAL_KNOWLEDGE = "cultural_knowledge"  # Order: 90
+
+    # Runtime
+    SESSION_STATE = "session_state"       # Order: 95
+
+    # Extension
+    CUSTOM = "custom"                     # Order: user-defined
+
+
+class SystemPromptComponent(BaseModel):
+    """
+    Individual component of a system prompt.
+
+    Stored directly in PromptVersion.components field.
+
+    Design Notes:
+    - `order` uses 10-increment scale for insertability
+    - `xml_tag` follows Agno convention: <tag_name>content</tag_name>
+    - `metadata` for component-specific config
+
+    Cross-ref: Agent XML tags at agent/agent.py:7742-8083
+    """
+
+    type: PromptComponentType = Field(
+        ...,
+        description="Component type"
+    )
+
+    content: str = Field(
+        ...,
+        description="Component content (may include {{variables}})"
+    )
+
+    name: Optional[str] = Field(
+        default=None,
+        description="Name for CUSTOM type components (required for CUSTOM)"
+    )
+
+    order: int = Field(
+        default=50,
+        ge=0,
+        le=100,
+        description="Render order (0-100)"
+    )
+
+    xml_tag: Optional[str] = Field(
+        default=None,
+        description="XML tag wrapper (e.g., 'your_role' -> <your_role>...</your_role>)"
+    )
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether to include in composition"
+    )
+
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Component-specific metadata"
+    )
+
+    @model_validator(mode="after")
+    def validate_custom_name(self) -> "SystemPromptComponent":
+        """CUSTOM type requires a name."""
+        if self.type == PromptComponentType.CUSTOM and not self.name:
+            raise ValueError("CUSTOM components must have a name")
+        return self
+
+    @classmethod
+    def get_default_order(cls, component_type: PromptComponentType) -> int:
+        """Get default order for a component type."""
+        orders = {
+            PromptComponentType.DESCRIPTION: 10,
+            PromptComponentType.ROLE: 20,
+            PromptComponentType.INSTRUCTIONS: 30,
+            PromptComponentType.TOOL_INSTRUCTIONS: 40,
+            PromptComponentType.EXPECTED_OUTPUT: 50,
+            PromptComponentType.ADDITIONAL_INFO: 60,
+            PromptComponentType.ADDITIONAL_CONTEXT: 70,
+            PromptComponentType.MEMORIES: 80,
+            PromptComponentType.SESSION_SUMMARY: 85,
+            PromptComponentType.CULTURAL_KNOWLEDGE: 90,
+            PromptComponentType.SESSION_STATE: 95,
+            PromptComponentType.CUSTOM: 50,
+        }
+        return orders.get(component_type, 50)
+
+    @classmethod
+    def get_default_xml_tag(cls, component_type: PromptComponentType) -> Optional[str]:
+        """Get default XML tag for a component type."""
+        tags = {
+            PromptComponentType.ROLE: "your_role",
+            PromptComponentType.INSTRUCTIONS: "instructions",
+            PromptComponentType.EXPECTED_OUTPUT: "expected_output",
+            PromptComponentType.ADDITIONAL_INFO: "additional_information",
+            PromptComponentType.MEMORIES: "memories_from_previous_interactions",
+            PromptComponentType.SESSION_SUMMARY: "summary_of_previous_interactions",
+            PromptComponentType.CULTURAL_KNOWLEDGE: "cultural_knowledge",
+            PromptComponentType.SESSION_STATE: "session_state",
+        }
+        return tags.get(component_type)
 
 
 class PromptMetadata(BaseModel):
@@ -112,6 +253,11 @@ class PromptTemplate(BaseModel):
 class PromptVersion(BaseModel):
     """
     A versioned prompt with full tracking information.
+
+    Supports both traditional prompts and component-based system prompts.
+    Component-based prompts have a non-empty `components` list.
+
+    Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 3.3
     """
 
     id: str = Field(..., description="Unique identifier for this version")
@@ -152,6 +298,19 @@ class PromptVersion(BaseModel):
 
     # Content hash for integrity
     content_hash: str = Field(default="", description="SHA256 hash of content")
+
+    # Component-based system prompts (NEW)
+    components: Optional[List[SystemPromptComponent]] = Field(
+        default=None,
+        description="Optional list of components for system prompts. "
+                    "If present, template.content is the composed result."
+    )
+
+    # Change tracking for traceability (NEW)
+    change_description: Optional[str] = Field(
+        default=None,
+        description="Description of changes from parent version"
+    )
 
     @model_validator(mode="after")
     def compute_hash(self) -> "PromptVersion":
@@ -194,6 +353,46 @@ class PromptVersion(BaseModel):
         """Check if this version is a fork."""
         return self.forked_from is not None
 
+    def is_system_prompt(self) -> bool:
+        """Check if this is a component-based system prompt."""
+        return self.components is not None and len(self.components) > 0
+
+    def get_component(
+        self,
+        component_type: PromptComponentType,
+        component_name: Optional[str] = None
+    ) -> Optional[SystemPromptComponent]:
+        """
+        Get a specific component by type.
+
+        Args:
+            component_type: Type of component
+            component_name: Name (required for CUSTOM type)
+
+        Returns:
+            Component if found, None otherwise
+        """
+        if not self.components:
+            return None
+
+        for comp in self.components:
+            if comp.type == component_type:
+                if component_type == PromptComponentType.CUSTOM:
+                    if comp.name == component_name:
+                        return comp
+                else:
+                    return comp
+        return None
+
+    def get_components_by_type(
+        self,
+        component_type: PromptComponentType
+    ) -> List[SystemPromptComponent]:
+        """Get all components of a given type (useful for CUSTOM)."""
+        if not self.components:
+            return []
+        return [c for c in self.components if c.type == component_type]
+
     def get_version_string(self) -> str:
         """Get version as string (e.g., 'v1', 'v2')."""
         return f"v{self.version}"
@@ -206,6 +405,10 @@ class PromptVersion(BaseModel):
 class PromptDiff(BaseModel):
     """
     Represents differences between two prompt versions.
+
+    Supports both traditional prompts and component-based system prompts.
+
+    Cross-ref: SYSTEM_PROMPT_EDITOR_SPEC.md Section 3.4
     """
 
     from_version: str = Field(..., description="Source version ID")
@@ -224,6 +427,26 @@ class PromptDiff(BaseModel):
     variables_removed: Set[str] = Field(
         default_factory=set,
         description="Removed variables"
+    )
+
+    # Component-level diff fields (NEW)
+    components_added: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Components added in to_version"
+    )
+    components_removed: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Components removed from from_version"
+    )
+    components_changed: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict,
+        description="Components with changed content: {type: {old, new}}"
+    )
+
+    # Change description from the newer version (NEW)
+    change_description: Optional[str] = Field(
+        default=None,
+        description="Change description from the to_version"
     )
 
     @classmethod
@@ -254,6 +477,40 @@ class PromptDiff(BaseModel):
                     "new": new_meta.get(key)
                 }
 
+        # Compute component-level diff
+        components_added: List[Dict[str, Any]] = []
+        components_removed: List[Dict[str, Any]] = []
+        components_changed: Dict[str, Dict[str, str]] = {}
+
+        if from_prompt.components or to_prompt.components:
+            from_comps = from_prompt.components or []
+            to_comps = to_prompt.components or []
+
+            def comp_key(c: SystemPromptComponent) -> str:
+                if c.type == PromptComponentType.CUSTOM:
+                    return f"custom:{c.name}"
+                return c.type.value
+
+            from_map = {comp_key(c): c for c in from_comps}
+            to_map = {comp_key(c): c for c in to_comps}
+
+            from_keys = set(from_map.keys())
+            to_keys = set(to_map.keys())
+
+            components_added = [
+                to_map[k].model_dump() for k in (to_keys - from_keys)
+            ]
+            components_removed = [
+                from_map[k].model_dump() for k in (from_keys - to_keys)
+            ]
+
+            for k in (from_keys & to_keys):
+                if from_map[k].content != to_map[k].content:
+                    components_changed[k] = {
+                        "old": from_map[k].content,
+                        "new": to_map[k].content,
+                    }
+
         return cls(
             from_version=from_prompt.id,
             to_version=to_prompt.id,
@@ -263,6 +520,10 @@ class PromptDiff(BaseModel):
             metadata_changes=meta_changes,
             variables_added=new_vars - old_vars,
             variables_removed=old_vars - new_vars,
+            components_added=components_added,
+            components_removed=components_removed,
+            components_changed=components_changed,
+            change_description=to_prompt.change_description,
         )
 
 
