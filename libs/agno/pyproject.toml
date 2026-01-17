@@ -68,6 +68,9 @@ dev = [
 os = ["fastapi", "uvicorn", "PyJWT"]
 
 
+# Dependencies for Prompt Versioning
+mlflow = ["mlflow>=2.0.0"]
+
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]
@@ -343,6 +346,9 @@ integration-tests = [
     "fastmcp"
 ]
 
+[project.scripts]
+agno-prompts = "agno.prompt_versioning.cli:main"
+
 [project.urls]
 homepage = "https://agno.com"
 documentation = "https://docs.agno.com"
@@ -450,6 +456,7 @@ module = [
   "mem0.*",
   "memori.*",
   "mcp.*",
+  "mlflow.*",
   "notion_client.*",
   "memory_profiler.*",
   "mistralai.*",
