@@ -1,7 +1,7 @@
 # SystemPromptEditor API Specification (Greenfield)
 
 > **Status**: Draft Specification
-> **Version**: 1.0.0
+> **Version**: 2.0.0
 > **Last Updated**: 2026-01-17
 > **Authors**: Engineering Team
 
@@ -15,9 +15,15 @@
 4. [API Specification](#4-api-specification)
 5. [Storage Schema](#5-storage-schema)
 6. [Integration with Agent](#6-integration-with-agent)
-7. [Blast Radius Analysis](#7-blast-radius-analysis)
-8. [Testing Strategy](#8-testing-strategy)
-9. [Implementation Checklist](#9-implementation-checklist)
+7. [Memory and Knowledge Integration](#7-memory-and-knowledge-integration)
+8. [Blast Radius Analysis](#8-blast-radius-analysis)
+9. [Benefits & Use Cases](#9-benefits--use-cases)
+10. [Risks & Mitigations](#10-risks--mitigations)
+11. [Future Enhancements](#11-future-enhancements)
+12. [Testing Strategy](#12-testing-strategy)
+13. [Code Examples](#13-code-examples)
+14. [Implementation Checklist](#14-implementation-checklist)
+15. [Cross-Reference Index](#15-cross-reference-index)
 
 ---
 
@@ -33,6 +39,7 @@ The SystemPromptEditor provides a unified interface for managing Agno Agent syst
 - Agent-aware prompt extraction and application
 - Semantic understanding of Agno's XML tag structure
 - Full MLflow-backed versioning, snapshots, and forks
+- Complete traceability with change descriptions
 
 ### 1.3 Architecture (Simplified)
 
@@ -57,6 +64,28 @@ The SystemPromptEditor provides a unified interface for managing Agno Agent syst
 
 **Key Simplification**: Single unified architecture. No wrapper patterns or indirection.
 
+### 1.4 System Prompt Components Overview
+
+The `Agent.get_system_message()` method (lines 7742-8083 in `/libs/agno/agno/agent/agent.py`) builds prompts from these sources:
+
+| Component | Source | XML Tag | Optional | Priority |
+|-----------|--------|---------|----------|----------|
+| **Description** | `agent.description` | None | Yes | 1 |
+| **Role** | `agent.role` | `<your_role>` | Yes | 2 |
+| **Instructions** | `agent.instructions` + model instructions | `<instructions>` | Yes | 3 |
+| **Additional Info** | Datetime, location, name, agentic filters | `<additional_information>` | Yes | 4 |
+| **Tool Instructions** | `agent._tool_instructions` | None | Yes | 5 |
+| **Expected Output** | `agent.expected_output` | `<expected_output>` | Yes | 6 |
+| **Additional Context** | `agent.additional_context` | None | Yes | 7 |
+| **Memories** | MemoryManager (user memories) | `<memories_from_previous_interactions>` | Yes | 8 |
+| **Cultural Knowledge** | CultureManager | `<cultural_knowledge>` | Yes | 9 |
+| **Session Summary** | SessionSummaryManager | `<summary_of_previous_interactions>` | Yes | 10 |
+| **Model Instructions** | Model-specific guidance | None | Yes | 11 |
+| **JSON Output Format** | Output schema instructions | None | Conditional | 12 |
+| **Session State** | Runtime session variables | `<session_state>` | Yes | 13 |
+
+> **Cross-ref**: See [Section 15](#15-cross-reference-index) for file paths and line numbers.
+
 ---
 
 ## 2. Design Principles
@@ -70,6 +99,8 @@ The SystemPromptEditor provides a unified interface for managing Agno Agent syst
 | **Composition Over Complexity** | Simple, flat model hierarchy |
 | **Explicit Over Implicit** | All operations traceable |
 | **Fail Fast** | Validate early, error clearly |
+| **Full Traceability** | Every change captured with description and author |
+| **Design for Future** | Order values allow insertion; models support extension |
 
 ### 2.2 What We Remove (vs. Backward-Compatible Design)
 
@@ -257,6 +288,12 @@ class PromptVersion(BaseModel):
                     "If present, template.content is the composed result."
     )
 
+    # NEW: Change tracking for traceability
+    change_description: Optional[str] = Field(
+        default=None,
+        description="Description of changes from parent version"
+    )
+
     def is_system_prompt(self) -> bool:
         """Check if this is a component-based system prompt."""
         return self.components is not None and len(self.components) > 0
@@ -334,6 +371,12 @@ class PromptDiff(BaseModel):
         description="Components with changed content: {type: {old, new}}"
     )
 
+    # NEW: Change description from the newer version
+    change_description: Optional[str] = Field(
+        default=None,
+        description="Change description from the to_version"
+    )
+
     @classmethod
     def compute(cls, from_prompt: PromptVersion, to_prompt: PromptVersion) -> "PromptDiff":
         """Compute diff between two prompt versions."""
@@ -381,6 +424,7 @@ class PromptDiff(BaseModel):
             components_added=components_added,
             components_removed=components_removed,
             components_changed=components_changed,
+            change_description=to_prompt.change_description,
         )
 ```
 
@@ -483,6 +527,7 @@ class PromptManager:
         new_content: str,
         component_name: Optional[str] = None,
         author: Optional[str] = None,
+        change_description: Optional[str] = None,  # Full traceability
     ) -> PromptVersion:
         """
         Edit a specific component, creating a new version.
@@ -493,9 +538,14 @@ class PromptManager:
             new_content: New content
             component_name: Required for CUSTOM type
             author: Author of edit
+            change_description: Description of changes for traceability
 
         Returns:
             New PromptVersion with updated component
+
+        Note:
+            The change_description is stored in the new version for
+            full traceability and audit trail.
         """
         existing = self.get(prompt_id)
         if existing is None:
@@ -527,11 +577,12 @@ class PromptManager:
         if not found:
             raise ValueError(f"Component not found: {component_type.value}")
 
-        # Create new version
+        # Create new version with change description
         return self._create_new_version(
             existing,
             components=components,
-            author=author
+            author=author,
+            change_description=change_description
         )
 
     def add_component(
@@ -539,6 +590,7 @@ class PromptManager:
         prompt_id: str,
         component: SystemPromptComponent,
         author: Optional[str] = None,
+        change_description: Optional[str] = None,
     ) -> PromptVersion:
         """Add a new component to a system prompt."""
         existing = self.get(prompt_id)
@@ -561,7 +613,8 @@ class PromptManager:
         return self._create_new_version(
             existing,
             components=components,
-            author=author
+            author=author,
+            change_description=change_description or f"Added {component.type.value} component"
         )
 
     def remove_component(
@@ -570,6 +623,7 @@ class PromptManager:
         component_type: PromptComponentType,
         component_name: Optional[str] = None,
         author: Optional[str] = None,
+        change_description: Optional[str] = None,
     ) -> PromptVersion:
         """Remove a component from a system prompt."""
         existing = self.get(prompt_id)
@@ -597,7 +651,58 @@ class PromptManager:
         return self._create_new_version(
             existing,
             components=components,
-            author=author
+            author=author,
+            change_description=change_description or f"Removed {component_type.value} component"
+        )
+
+    def reorder_components(
+        self,
+        prompt_id: str,
+        component_order: Dict[PromptComponentType, int],
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """
+        Change the order in which components are rendered.
+
+        Args:
+            prompt_id: ID of prompt to reorder
+            component_order: Dict mapping component types to new order values
+            author: Author of change
+            change_description: Description of reordering
+
+        Returns:
+            New PromptVersion with reordered components
+
+        Example:
+            >>> manager.reorder_components(
+            ...     prompt_id,
+            ...     {
+            ...         PromptComponentType.INSTRUCTIONS: 15,  # Move before role
+            ...         PromptComponentType.ROLE: 25,
+            ...     }
+            ... )
+        """
+        existing = self.get(prompt_id)
+        if existing is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not existing.is_system_prompt():
+            raise ValueError("Not a system prompt")
+
+        # Deep copy and update orders
+        components = []
+        for c in existing.components:
+            comp = SystemPromptComponent(**c.model_dump())
+            if c.type in component_order:
+                comp.order = component_order[c.type]
+            components.append(comp)
+
+        return self._create_new_version(
+            existing,
+            components=components,
+            author=author,
+            change_description=change_description or "Reordered components"
         )
 
     def get_components(self, prompt_id: str) -> List[SystemPromptComponent]:
@@ -617,6 +722,7 @@ class PromptManager:
         tags: Optional[List[str]] = None,
         author: Optional[str] = None,
         component_types: Optional[List[PromptComponentType]] = None,
+        model_compatibility: Optional[List[str]] = None,
     ) -> List[PromptVersion]:
         """
         Search system prompts.
@@ -626,6 +732,7 @@ class PromptManager:
             tags: Required tags
             author: Author filter
             component_types: Filter by component types present
+            model_compatibility: Filter by compatible models
 
         Returns:
             Matching system prompts
@@ -637,11 +744,20 @@ class PromptManager:
             for ct in component_types:
                 search_tags.append(f"component:{ct.value}")
 
-        return self.search(
+        results = self.search(
             name_pattern=name_pattern,
             tags=search_tags,
             author=author,
         )
+
+        # Additional filter by model compatibility if specified
+        if model_compatibility:
+            results = [
+                r for r in results
+                if any(m in r.metadata.model_compatibility for m in model_compatibility)
+            ]
+
+        return results
 
     # Internal helpers
 
@@ -681,6 +797,7 @@ class PromptManager:
         existing: PromptVersion,
         components: List[SystemPromptComponent],
         author: Optional[str] = None,
+        change_description: Optional[str] = None,
     ) -> PromptVersion:
         """Create new version from existing with updated components."""
         content = self._compose_components(components)
@@ -710,6 +827,7 @@ class PromptManager:
             ),
             parent_id=existing.id,
             components=components,
+            change_description=change_description,
         )
 
         self.store.save(new_version)
@@ -718,17 +836,18 @@ class PromptManager:
 
 ### 4.2 SystemPromptEditor (Convenience Layer)
 
-A thin convenience layer that adds Agent integration.
+A thin convenience layer that adds Agent integration and utility methods.
 
 ```python
 # File: prompt_versioning/system_prompt_editor.py (NEW)
 
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from agno.prompt_versioning.manager import PromptManager
 from agno.prompt_versioning.models import (
     PromptVersion,
     PromptComponentType,
     SystemPromptComponent,
+    PromptDiff,
 )
 
 if TYPE_CHECKING:
@@ -752,7 +871,8 @@ class SystemPromptEditor:
         >>> updated = editor.edit_component(
         ...     prompt.id,
         ...     PromptComponentType.ROLE,
-        ...     "New role content"
+        ...     "New role content",
+        ...     change_description="Updated role for premium support"
         ... )
     """
 
@@ -785,9 +905,24 @@ class SystemPromptEditor:
         """Create system prompt from components."""
         return self._manager.create_system_prompt(name, components, **kwargs)
 
-    def edit_component(self, *args, **kwargs) -> PromptVersion:
-        """Edit a component."""
-        return self._manager.edit_component(*args, **kwargs)
+    def edit_component(
+        self,
+        prompt_id: str,
+        component_type: PromptComponentType,
+        new_content: str,
+        component_name: Optional[str] = None,
+        author: Optional[str] = None,
+        change_description: Optional[str] = None,
+    ) -> PromptVersion:
+        """Edit a component with full traceability."""
+        return self._manager.edit_component(
+            prompt_id=prompt_id,
+            component_type=component_type,
+            new_content=new_content,
+            component_name=component_name,
+            author=author,
+            change_description=change_description,
+        )
 
     def add_component(self, *args, **kwargs) -> PromptVersion:
         """Add a component."""
@@ -796,6 +931,10 @@ class SystemPromptEditor:
     def remove_component(self, *args, **kwargs) -> PromptVersion:
         """Remove a component."""
         return self._manager.remove_component(*args, **kwargs)
+
+    def reorder_components(self, *args, **kwargs) -> PromptVersion:
+        """Reorder components."""
+        return self._manager.reorder_components(*args, **kwargs)
 
     def get(self, prompt_id: str) -> Optional[PromptVersion]:
         """Get prompt by ID."""
@@ -817,7 +956,7 @@ class SystemPromptEditor:
         """Fork prompt."""
         return self._manager.fork(*args, **kwargs)
 
-    def compare(self, *args, **kwargs):
+    def compare(self, *args, **kwargs) -> PromptDiff:
         """Compare versions."""
         return self._manager.compare(*args, **kwargs)
 
@@ -826,47 +965,8 @@ class SystemPromptEditor:
         return self._manager.search_system_prompts(**kwargs)
 
     # =========================================================================
-    # AGENT INTEGRATION
+    # PREVIEW AND COMPOSITION
     # =========================================================================
-
-    def create_from_agent(
-        self,
-        name: str,
-        agent: "Agent",
-        description: Optional[str] = None,
-        author: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-    ) -> PromptVersion:
-        """
-        Create a system prompt by extracting components from an Agent.
-
-        Args:
-            name: Unique prompt name
-            agent: Agent instance to extract from
-            description: Description
-            author: Author name
-            tags: Additional tags
-
-        Returns:
-            Created PromptVersion with extracted components
-
-        Note:
-            Extracts static configuration only. Runtime values
-            (memories, session state) are not extracted.
-        """
-        components = self._extract_from_agent(agent)
-
-        extra_tags = list(tags or [])
-        if hasattr(agent, "name") and agent.name:
-            extra_tags.append(f"agent:{agent.name}")
-
-        return self.create(
-            name=name,
-            components=components,
-            description=description or f"Extracted from agent",
-            author=author,
-            tags=extra_tags,
-        )
 
     def compose(self, prompt_id: str, **variables) -> str:
         """
@@ -902,6 +1002,277 @@ class SystemPromptEditor:
             content = f"<{comp.xml_tag}>\n{content}\n</{comp.xml_tag}>"
 
         return content
+
+    def preview_components(
+        self,
+        prompt_id: str,
+        include_only: Optional[List[PromptComponentType]] = None,
+        include_xml_tags: bool = True,
+    ) -> Dict[str, str]:
+        """
+        Preview all components as a dictionary.
+
+        Args:
+            prompt_id: Prompt ID
+            include_only: Optional list of component types to include
+            include_xml_tags: Whether to include XML tags in preview
+
+        Returns:
+            Dict mapping component type/name to rendered content
+
+        Example:
+            >>> previews = editor.preview_components(prompt_id)
+            >>> for name, content in previews.items():
+            ...     print(f"--- {name} ---")
+            ...     print(content)
+        """
+        prompt = self.get(prompt_id)
+        if prompt is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if not prompt.is_system_prompt():
+            raise ValueError("Not a system prompt")
+
+        result = {}
+        for comp in sorted(prompt.components, key=lambda c: c.order):
+            # Filter by type if specified
+            if include_only and comp.type not in include_only:
+                continue
+
+            # Generate key
+            if comp.type == PromptComponentType.CUSTOM:
+                key = f"custom:{comp.name}"
+            else:
+                key = comp.type.value
+
+            # Generate content
+            content = comp.content
+            if include_xml_tags and comp.xml_tag:
+                content = f"<{comp.xml_tag}>\n{content}\n</{comp.xml_tag}>"
+
+            result[key] = content
+
+        return result
+
+    # =========================================================================
+    # AGENT INTEGRATION
+    # =========================================================================
+
+    def create_from_agent(
+        self,
+        name: str,
+        agent: "Agent",
+        description: Optional[str] = None,
+        author: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> PromptVersion:
+        """
+        Create a system prompt by extracting components from an Agent.
+
+        Args:
+            name: Unique prompt name
+            agent: Agent instance to extract from
+            description: Description
+            author: Author name
+            tags: Additional tags
+
+        Returns:
+            Created PromptVersion with extracted components
+
+        Note:
+            Extracts static configuration only. Runtime values
+            (memories, session state) are not extracted.
+        """
+        components = self._extract_from_agent(agent)
+
+        extra_tags = list(tags or [])
+        if hasattr(agent, "name") and agent.name:
+            extra_tags.append(f"agent:{agent.name}")
+        if hasattr(agent, "model") and hasattr(agent.model, "id"):
+            extra_tags.append(f"model:{agent.model.id}")
+
+        return self.create(
+            name=name,
+            components=components,
+            description=description or f"Extracted from agent: {getattr(agent, 'name', 'unknown')}",
+            author=author,
+            tags=extra_tags,
+            model_compatibility=[agent.model.id] if hasattr(agent, "model") and hasattr(agent.model, "id") else None,
+        )
+
+    def apply_to_agent(
+        self,
+        prompt_id: str,
+        agent: "Agent",
+        override_system_message: bool = False,
+    ) -> None:
+        """
+        Apply a versioned system prompt to an Agent.
+
+        Args:
+            prompt_id: ID of the prompt version to apply
+            agent: Agent instance to modify
+            override_system_message: If True, set agent.system_message directly;
+                                     if False, set individual component attributes
+
+        Note:
+            This modifies the Agent in place. Changes are not persisted
+            to the Agent's original configuration.
+
+        Example:
+            >>> editor.apply_to_agent(prod_prompt.id, agent)
+            >>> # Agent now uses the versioned prompt
+        """
+        prompt = self.get(prompt_id)
+        if prompt is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        if override_system_message:
+            # Option 1: Set composed prompt directly
+            composed = self.compose(prompt_id)
+            agent.system_message = composed
+        else:
+            # Option 2: Set individual attributes (preserves Agent structure)
+            for comp in prompt.components:
+                if comp.type == PromptComponentType.DESCRIPTION:
+                    agent.description = comp.content
+                elif comp.type == PromptComponentType.ROLE:
+                    agent.role = comp.content
+                elif comp.type == PromptComponentType.INSTRUCTIONS:
+                    # Convert back to list if it was a list originally
+                    if comp.content.startswith("- "):
+                        agent.instructions = [
+                            line.lstrip("- ").strip()
+                            for line in comp.content.split("\n")
+                            if line.strip()
+                        ]
+                    else:
+                        agent.instructions = [comp.content]
+                elif comp.type == PromptComponentType.EXPECTED_OUTPUT:
+                    agent.expected_output = comp.content
+                elif comp.type == PromptComponentType.ADDITIONAL_CONTEXT:
+                    agent.additional_context = comp.content
+
+    def get_agent_compatible_versions(
+        self,
+        model_id: str,
+    ) -> List[PromptVersion]:
+        """
+        Get system prompts compatible with a specific model.
+
+        Args:
+            model_id: Model identifier (e.g., "gpt-4", "claude-3-opus")
+
+        Returns:
+            List of compatible PromptVersion objects
+        """
+        return self._manager.search_system_prompts(
+            model_compatibility=[model_id]
+        )
+
+    # =========================================================================
+    # EXPORT
+    # =========================================================================
+
+    def export_as_markdown(
+        self,
+        prompt_id: str,
+        include_metadata: bool = True,
+        include_history: bool = False,
+    ) -> str:
+        """
+        Export a system prompt as readable markdown.
+
+        Args:
+            prompt_id: Prompt ID
+            include_metadata: Include metadata section
+            include_history: Include version history
+
+        Returns:
+            Markdown string
+
+        Example:
+            >>> md = editor.export_as_markdown(prompt_id)
+            >>> with open("prompt_doc.md", "w") as f:
+            ...     f.write(md)
+        """
+        prompt = self.get(prompt_id)
+        if prompt is None:
+            raise ValueError(f"Prompt not found: {prompt_id}")
+
+        lines = [
+            f"# System Prompt: {prompt.name}",
+            "",
+            f"**Version**: {prompt.version}",
+            f"**Status**: {prompt.status.value}",
+            f"**ID**: `{prompt.id}`",
+            "",
+        ]
+
+        if include_metadata:
+            lines.extend([
+                "## Metadata",
+                "",
+                f"- **Author**: {prompt.metadata.author or 'Unknown'}",
+                f"- **Description**: {prompt.metadata.description or 'None'}",
+                f"- **Tags**: {', '.join(prompt.metadata.tags) if prompt.metadata.tags else 'None'}",
+                f"- **Model Compatibility**: {', '.join(prompt.metadata.model_compatibility) if prompt.metadata.model_compatibility else 'Any'}",
+                f"- **Created**: {prompt.created_at.isoformat()}",
+                f"- **Updated**: {prompt.updated_at.isoformat()}",
+                "",
+            ])
+
+        if prompt.change_description:
+            lines.extend([
+                "## Latest Changes",
+                "",
+                prompt.change_description,
+                "",
+            ])
+
+        lines.extend([
+            "## Components",
+            "",
+        ])
+
+        if prompt.is_system_prompt():
+            for comp in sorted(prompt.components, key=lambda c: c.order):
+                comp_name = comp.name if comp.type == PromptComponentType.CUSTOM else comp.type.value
+                lines.extend([
+                    f"### {comp_name.replace('_', ' ').title()}",
+                    "",
+                    f"- **Order**: {comp.order}",
+                    f"- **XML Tag**: `{comp.xml_tag or 'None'}`",
+                    f"- **Enabled**: {comp.enabled}",
+                    "",
+                    "```",
+                    comp.content,
+                    "```",
+                    "",
+                ])
+        else:
+            lines.extend([
+                "```",
+                prompt.template.content,
+                "```",
+                "",
+            ])
+
+        if include_history and prompt.parent_id:
+            lines.extend([
+                "## Version History",
+                "",
+                f"- Parent: `{prompt.parent_id}`",
+            ])
+            if prompt.forked_from:
+                lines.append(f"- Forked from: `{prompt.forked_from}`")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    # =========================================================================
+    # INTERNAL HELPERS
+    # =========================================================================
 
     def _extract_from_agent(self, agent: "Agent") -> List[SystemPromptComponent]:
         """Extract components from Agent instance."""
@@ -1015,6 +1386,7 @@ Components are stored natively in the prompt artifact:
   ],
   "parent_id": "prompt_xyz789",
   "forked_from": null,
+  "change_description": "Updated instructions for clarity",
   "created_at": "2026-01-17T10:30:00Z",
   "updated_at": "2026-01-17T12:45:00Z",
   "snapshot_name": null,
@@ -1043,6 +1415,10 @@ def _prompt_to_artifact(self, prompt: PromptVersion) -> Dict[str, Any]:
     if prompt.components:
         data["components"] = [c.model_dump() for c in prompt.components]
 
+    # NEW: Include change description
+    if prompt.change_description:
+        data["change_description"] = prompt.change_description
+
     return data
 
 def _artifact_to_prompt(self, data: Dict[str, Any]) -> PromptVersion:
@@ -1059,6 +1435,7 @@ def _artifact_to_prompt(self, data: Dict[str, Any]) -> PromptVersion:
     return PromptVersion(
         # Existing fields...
         components=components,
+        change_description=data.get("change_description"),
     )
 ```
 
@@ -1066,7 +1443,40 @@ def _artifact_to_prompt(self, data: Dict[str, Any]) -> PromptVersion:
 
 ## 6. Integration with Agent
 
-### 6.1 Current State (Read-Only)
+### 6.1 Agent Priority Chain (Backward Compatibility)
+
+When Agent integrates with SystemPromptEditor, the following priority chain applies:
+
+```python
+class Agent:
+    """Agent with system prompt versioning support."""
+
+    # Phase 1: Keep existing system_message attribute
+    system_message: Optional[Union[str, Callable, Message]] = None
+
+    # Phase 2: Add new system_prompt_version_id attribute
+    system_prompt_version_id: Optional[str] = None
+    system_prompt_editor: Optional[SystemPromptEditor] = None
+
+    def get_system_message(self, session, ...):
+        """Existing method - enhanced with versioning support."""
+
+        # Priority 1: Versioned system prompt (if configured)
+        if self.system_prompt_version_id and self.system_prompt_editor:
+            prompt_content = self.system_prompt_editor.compose(
+                self.system_prompt_version_id,
+            )
+            return Message(role=self.system_message_role, content=prompt_content)
+
+        # Priority 2: Direct system_message (backward compatible)
+        if self.system_message is not None:
+            return self._process_system_message(self.system_message)
+
+        # Priority 3: Build from components (current behavior)
+        return self._build_system_message_from_components(...)
+```
+
+### 6.2 Current State (Read-Only Extraction)
 
 ```python
 # Extract agent config to versioned prompt
@@ -1077,48 +1487,211 @@ prompt = editor.create_from_agent("my_agent_v1", agent)
 composed = editor.compose(prompt.id)
 ```
 
-### 6.2 Future State (Agent Modification)
+### 6.3 Future State (Agent Modification)
 
 When Agent is modified to support versioned prompts:
 
 ```python
-class Agent:
-    system_prompt_id: Optional[str] = None
+# Configure agent to use versioned prompt
+agent = Agent(
+    name="support",
+    system_prompt_version_id="prompt_abc123",
+    system_prompt_editor=SystemPromptEditor(),
+)
 
-    def get_system_message(self, ...):
-        if self.system_prompt_id:
-            editor = SystemPromptEditor()
-            return editor.compose(self.system_prompt_id)
-        # ... existing logic
+# Agent automatically uses versioned prompt in get_system_message()
+response = agent.run("Help me with my subscription")
 ```
 
 ---
 
-## 7. Blast Radius Analysis
+## 7. Memory and Knowledge Integration
 
-### 7.1 Summary
+### 7.1 Memory Manager Integration
+
+The MemoryManager (`/libs/agno/agno/memory/manager.py`) injects memories into system prompts:
+
+```python
+# From memory/manager.py - System prompt includes existing memories
+system_message_content += "<memories_from_previous_interactions>"
+for _memory in user_memories:
+    system_message_content += f"\n- {_memory.memory}"
+system_message_content += "\n</memories_from_previous_interactions>\n\n"
+
+# Optionally includes memory update capabilities
+if self.enable_agentic_memory:
+    system_message_content += (
+        "\n<updating_user_memories>\n"
+        "- You have access to the `update_user_memory` tool...\n"
+        "</updating_user_memories>\n\n"
+    )
+```
+
+**Integration as Component**:
+
+```python
+memory_component = SystemPromptComponent(
+    type=PromptComponentType.MEMORIES,
+    content=memory_markdown,  # Formatted list of memories
+    xml_tag="memories_from_previous_interactions",
+    order=80,
+    enabled=True,
+    metadata={
+        "source": "MemoryManager",
+        "strategy": "last_n",  # or "agentic", "first_n"
+        "limit": 10
+    }
+)
+```
+
+### 7.2 Knowledge Integration
+
+Knowledge documents are added to **user messages** (not system prompts), but knowledge instructions can be included as a component:
+
+```python
+# From agent.py lines 8578-8588
+if self.add_knowledge_to_context and references is not None:
+    user_msg_content_str += "\n\nUse the following references from the knowledge base:\n"
+    user_msg_content_str += "<references>\n"
+    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+    user_msg_content_str += "</references>"
+```
+
+**Knowledge Instructions Component**:
+
+```python
+knowledge_component = SystemPromptComponent(
+    type=PromptComponentType.CUSTOM,
+    name="knowledge_instructions",
+    content="""You have access to a knowledge base via the search_knowledge_base tool.
+When the user asks questions that might be answered by knowledge base documents,
+use the tool to find relevant information.""",
+    order=50,
+    xml_tag="knowledge_access",
+    enabled=True,
+)
+```
+
+### 7.3 Session Summary Integration
+
+```python
+session_summary_component = SystemPromptComponent(
+    type=PromptComponentType.SESSION_SUMMARY,
+    content=session_summary_text,
+    xml_tag="summary_of_previous_interactions",
+    order=85,
+    enabled=True,
+    metadata={
+        "source": "SessionSummaryManager",
+        "session_id": session.id
+    }
+)
+```
+
+---
+
+## 8. Blast Radius Analysis
+
+### 8.1 Summary
 
 | Change | Files Modified | Risk | Rationale |
 |--------|----------------|------|-----------|
 | Add `PromptComponentType` | models.py | LOW | New enum, additive |
 | Add `SystemPromptComponent` | models.py | LOW | New model, additive |
 | Add `components` to `PromptVersion` | models.py | LOW | Optional field, no breaking change |
+| Add `change_description` to `PromptVersion` | models.py | LOW | Optional field, additive |
 | Enhance `PromptDiff` | models.py | LOW | Additional optional fields |
 | Add component methods to `PromptManager` | manager.py | LOW | New methods, additive |
 | Modify `MLflowPromptStore` serialization | mlflow_backend.py | LOW | Backward-compatible (optional field) |
 | Add `SystemPromptEditor` | NEW FILE | NONE | New file |
 
-### 7.2 No Breaking Changes
+### 8.2 No Breaking Changes
 
 - All new fields are optional
 - Existing methods unchanged
 - Non-component prompts continue to work
+- Existing MLflow artifacts remain readable
+
+### 8.3 Side Effect Analysis
+
+| Operation | Potential Side Effect | Mitigation |
+|-----------|----------------------|------------|
+| Component composition | Order changes output | Validate order uniqueness |
+| Agent extraction | Missing attributes | Graceful handling with defaults |
+| MLflow serialization | Large artifact size | Compress if needed |
+| Version creation | Rapid version growth | Archival policy |
 
 ---
 
-## 8. Testing Strategy
+## 9. Benefits & Use Cases
 
-### 8.1 Test Organization
+### 9.1 For Prompt Engineers
+
+- **Version control**: Track all changes with full history and descriptions
+- **A/B testing**: Create experimental variants via forks
+- **Snapshot releases**: Create named versions for specific deployments
+- **Component reuse**: Share common prompt patterns across agents
+- **Detailed documentation**: Export with full component breakdown
+
+### 9.2 For Developers
+
+- **Programmatic control**: Create, edit, and apply prompts via API
+- **Integration**: Seamlessly works with existing Agent system
+- **Template variables**: Parameterized prompts for dynamic behavior
+- **Model compatibility**: Track which models work with which prompts
+
+### 9.3 For Teams
+
+- **Collaboration**: Tag and search prompts by team/project
+- **Audit trail**: Full metadata including author, timestamp, change descriptions
+- **Approval workflows**: Status transitions (draft → active → archived)
+- **Production safety**: Snapshots prevent accidental changes
+
+### 9.4 Use Case Examples
+
+| Use Case | How SystemPromptEditor Helps |
+|----------|------------------------------|
+| Production deployment | Create snapshot, test, deploy with confidence |
+| Prompt experimentation | Fork, modify, A/B test without affecting production |
+| Team collaboration | Tag by team, search by author, review changes |
+| Compliance/audit | Full traceability with change descriptions |
+| Multi-model support | Track model compatibility per prompt version |
+
+---
+
+## 10. Risks & Mitigations
+
+| Risk | Impact | Likelihood | Mitigation |
+|------|--------|------------|------------|
+| **Performance degradation** | Slow prompt composition | Low | Cache composed prompts, lazy-load components |
+| **Storage growth** | Disk space exhaustion | Medium | Implement archival policy for old versions |
+| **Migration complexity** | Integration errors | Low | Provide automated migration tools, clear docs |
+| **Composability edge cases** | Incorrect prompt output | Medium | Comprehensive test suite with realistic prompts |
+| **Race conditions** | Data inconsistency | Low | See MLFLOW_INTEGRATION.md limitations section |
+| **Component ordering conflicts** | Unexpected output | Low | Validate order uniqueness, use 10-increment scale |
+
+> **Cross-ref**: See `/libs/agno/agno/prompt_versioning/docs/MLFLOW_INTEGRATION.md` for detailed MLflow limitations and workarounds.
+
+---
+
+## 11. Future Enhancements
+
+| Enhancement | Description | Priority |
+|-------------|-------------|----------|
+| **Visual Editor** | Web UI for component editing | Medium |
+| **Prompt Optimization** | AI-assisted suggestions for improvements | Low |
+| **A/B Testing Framework** | Built-in evaluation and metrics | Medium |
+| **Multi-language Support** | Generate prompts in different languages | Low |
+| **Component Library** | Pre-built prompt components for common use cases | Medium |
+| **Real-time Analytics** | Track which prompt versions perform best | Low |
+| **Collaborative Editing** | Multi-user editing with conflict resolution | Low |
+| **Prompt Chain Management** | Version entire workflows, not just single prompts | Medium |
+
+---
+
+## 12. Testing Strategy
+
+### 12.1 Test Organization
 
 ```
 tests/
@@ -1133,7 +1706,7 @@ tests/
     └── test_agent_integration.py        # Agent extraction
 ```
 
-### 8.2 Test Examples
+### 12.2 Test Examples
 
 ```python
 # Unit: test_component_models.py
@@ -1152,6 +1725,16 @@ def test_custom_requires_name():
             content="content"
         )
 
+def test_change_description_captured():
+    """Change description is stored in version."""
+    version = PromptVersion(
+        id="test",
+        name="test",
+        template=PromptTemplate(content="test"),
+        change_description="Updated role for premium support"
+    )
+    assert version.change_description == "Updated role for premium support"
+
 # Integration: test_manager_components.py
 
 def test_create_system_prompt(manager):
@@ -1168,18 +1751,35 @@ def test_create_system_prompt(manager):
     assert prompt.is_system_prompt()
     assert len(prompt.components) == 1
 
-def test_edit_component_creates_version(manager):
-    """Editing creates new version."""
+def test_edit_component_creates_version_with_description(manager):
+    """Editing creates new version with change description."""
     prompt = manager.create_system_prompt("test", [...])
 
     updated = manager.edit_component(
         prompt.id,
         PromptComponentType.ROLE,
-        "New content"
+        "New content",
+        change_description="Updated role for premium support"
     )
 
     assert updated.version == 2
     assert updated.parent_id == prompt.id
+    assert updated.change_description == "Updated role for premium support"
+
+def test_reorder_components(manager):
+    """Reordering creates new version."""
+    prompt = manager.create_system_prompt("test", [
+        SystemPromptComponent(type=PromptComponentType.ROLE, content="role", order=20),
+        SystemPromptComponent(type=PromptComponentType.INSTRUCTIONS, content="inst", order=30),
+    ])
+
+    updated = manager.reorder_components(
+        prompt.id,
+        {PromptComponentType.INSTRUCTIONS: 15}  # Move before role
+    )
+
+    components = manager.get_components(updated.id)
+    assert components[0].type == PromptComponentType.INSTRUCTIONS
 
 # E2E: test_component_workflows.py
 
@@ -1188,8 +1788,13 @@ def test_full_iteration_workflow(editor):
     # Create
     v1 = editor.create("agent", components)
 
-    # Edit
-    v2 = editor.edit_component(v1.id, ...)
+    # Edit with description
+    v2 = editor.edit_component(
+        v1.id,
+        PromptComponentType.ROLE,
+        "New role",
+        change_description="Improved role clarity"
+    )
 
     # Add guardrails
     v3 = editor.add_component(v2.id, guardrails)
@@ -1203,9 +1808,17 @@ def test_full_iteration_workflow(editor):
     # Verify
     assert prod.snapshot_name == "production-v1"
     assert variant.forked_from == v3.id
+
+def test_export_as_markdown(editor):
+    """Export produces valid markdown."""
+    prompt = editor.create("test", components)
+    md = editor.export_as_markdown(prompt.id)
+
+    assert "# System Prompt: test" in md
+    assert "## Components" in md
 ```
 
-### 8.3 Coverage Requirements
+### 12.3 Coverage Requirements
 
 | Category | Target | Focus |
 |----------|--------|-------|
@@ -1215,13 +1828,199 @@ def test_full_iteration_workflow(editor):
 
 ---
 
-## 9. Implementation Checklist
+## 13. Code Examples
+
+### 13.1 Creating a System Prompt from Agent
+
+```python
+from agno.prompt_versioning.system_prompt_editor import SystemPromptEditor
+from agno.agent import Agent
+
+# Initialize editor
+editor = SystemPromptEditor(tracking_uri="mlruns")
+
+# Create an agent
+agent = Agent(
+    name="customer_support",
+    role="A friendly customer support specialist",
+    instructions=[
+        "Always respond with empathy",
+        "Provide detailed solutions",
+        "Escalate complex issues"
+    ],
+    description="Customer support agent for SaaS platform"
+)
+
+# Capture current prompt as versioned artifact
+sys_prompt = editor.create_from_agent(
+    name="customer_support_main",
+    agent=agent,
+    author="alice@company.com",
+    tags=["production", "customer_support"],
+    description="Main customer support system prompt"
+)
+
+print(f"Created system prompt version: {sys_prompt.id}")
+print(f"Version number: {sys_prompt.version}")
+print(f"Composed prompt length: {len(sys_prompt.template.content)}")
+```
+
+### 13.2 Editing Components with Traceability
+
+```python
+# Update the role with more specific guidance
+updated = editor.edit_component(
+    prompt_id=sys_prompt.id,
+    component_type=PromptComponentType.ROLE,
+    new_content="""You are an expert customer support specialist for our SaaS platform.
+You combine technical knowledge with empathy to solve customer issues.
+You are authorized to:
+- Provide refunds for unsatisfied customers
+- Offer service upgrades
+- Escalate to technical team when needed""",
+    author="alice@company.com",
+    change_description="Added authorization details and upgrade authority"
+)
+
+print(f"Updated to version: {updated.version}")
+print(f"Change: {updated.change_description}")
+```
+
+### 13.3 Adding Custom Components (Guardrails)
+
+```python
+from agno.prompt_versioning.models import SystemPromptComponent, PromptComponentType
+
+# Add guardrails as a custom component
+guardrails = SystemPromptComponent(
+    type=PromptComponentType.CUSTOM,
+    name="guardrails",
+    content="""IMPORTANT CONSTRAINTS:
+- Never share internal pricing with customers
+- Never promise features not in our roadmap
+- Always acknowledge response time limits during outages
+- Maintain professional tone even with frustrated customers""",
+    order=25,  # Right after role
+    xml_tag="guardrails",
+    enabled=True,
+    metadata={"category": "safety"}
+)
+
+updated = editor.add_component(
+    prompt_id=sys_prompt.id,
+    component=guardrails,
+    author="alice@company.com",
+    change_description="Added safety guardrails for customer interactions"
+)
+```
+
+### 13.4 Creating Snapshots for Deployment
+
+```python
+# Create production snapshot
+prod_snapshot = editor.snapshot(
+    prompt_id=updated.id,
+    snapshot_name="production-2026-01",
+    description="January 2026 production release"
+)
+
+# Create staging snapshot for testing
+staging_snapshot = editor.snapshot(
+    prompt_id=updated.id,
+    snapshot_name="staging-experimental",
+    description="Experimental features for staging environment"
+)
+
+print(f"Production: {prod_snapshot.snapshot_name}")
+print(f"Staging: {staging_snapshot.snapshot_name}")
+```
+
+### 13.5 Comparing Versions
+
+```python
+# See what changed between versions
+diff = editor.compare(
+    from_id=sys_prompt.id,
+    to_id=updated.id
+)
+
+print("Change Description:", diff.change_description)
+print("\nComponents Changed:")
+for component_type, changes in diff.components_changed.items():
+    print(f"  {component_type}:")
+    print(f"    Old: {changes['old'][:50]}...")
+    print(f"    New: {changes['new'][:50]}...")
+
+print("\nComponents Added:")
+for comp in diff.components_added:
+    print(f"  - {comp['type']}: {comp.get('name', 'N/A')}")
+```
+
+### 13.6 Applying to Agent at Runtime
+
+```python
+# Apply versioned prompt to agent
+prod_version = editor.get_by_name("customer_support_main", version=3)
+editor.apply_to_agent(
+    prompt_id=prod_version.id,
+    agent=agent,
+    override_system_message=True
+)
+
+# Now when agent.get_system_message() is called,
+# it uses the versioned system prompt
+response = agent.run("Help me with my subscription")
+```
+
+### 13.7 Exporting for Documentation
+
+```python
+# Export as markdown for documentation
+markdown = editor.export_as_markdown(
+    prompt_id=prod_version.id,
+    include_metadata=True,
+    include_history=True
+)
+
+with open("prompt_documentation.md", "w") as f:
+    f.write(markdown)
+
+# Output includes:
+# - Component breakdown
+# - Variables used
+# - Model compatibility
+# - Version history
+# - Change annotations
+```
+
+### 13.8 Searching and Filtering
+
+```python
+# Find production prompts for customer support
+prompts = editor.search(
+    tags=["production", "customer_support"],
+    author="alice@company.com"
+)
+
+for prompt in prompts:
+    print(f"{prompt.name} v{prompt.version}: {prompt.metadata.description}")
+
+# Find prompts compatible with specific model
+gpt4_prompts = editor.get_agent_compatible_versions("gpt-4")
+for p in gpt4_prompts:
+    print(f"- {p.name}")
+```
+
+---
+
+## 14. Implementation Checklist
 
 ### Phase 1: Models
 
 - [ ] Add `PromptComponentType` enum to `models.py`
 - [ ] Add `SystemPromptComponent` model to `models.py`
 - [ ] Add `components` field to `PromptVersion`
+- [ ] Add `change_description` field to `PromptVersion`
 - [ ] Add `is_system_prompt()`, `get_component()` methods
 - [ ] Enhance `PromptDiff.compute()` for component diff
 - [ ] Unit tests (95% coverage)
@@ -1235,8 +2034,9 @@ def test_full_iteration_workflow(editor):
 ### Phase 3: Manager
 
 - [ ] Add `create_system_prompt()` method
-- [ ] Add `edit_component()` method
+- [ ] Add `edit_component()` method with `change_description`
 - [ ] Add `add_component()`, `remove_component()` methods
+- [ ] Add `reorder_components()` method
 - [ ] Add `get_components()` method
 - [ ] Add `search_system_prompts()` method
 - [ ] Integration tests (85% coverage)
@@ -1244,8 +2044,12 @@ def test_full_iteration_workflow(editor):
 ### Phase 4: SystemPromptEditor
 
 - [ ] Create `system_prompt_editor.py`
-- [ ] Implement Agent extraction
-- [ ] Implement convenience methods
+- [ ] Implement Agent extraction (`create_from_agent`)
+- [ ] Implement Agent application (`apply_to_agent`)
+- [ ] Implement `preview_components()` (plural, returns Dict)
+- [ ] Implement `get_agent_compatible_versions()`
+- [ ] Implement `export_as_markdown()`
+- [ ] Implement convenience delegation methods
 - [ ] E2E tests (80% coverage)
 - [ ] Documentation
 
@@ -1257,14 +2061,49 @@ def test_full_iteration_workflow(editor):
 
 ---
 
+## 15. Cross-Reference Index
+
+### File Paths and Line Numbers
+
+| Reference | File | Lines | Description |
+|-----------|------|-------|-------------|
+| Agent.get_system_message | `/libs/agno/agno/agent/agent.py` | 7742-8083 | System prompt construction |
+| XML tag structure | `/libs/agno/agno/agent/agent.py` | 7742-8083 | Tag conventions |
+| MemoryManager prompt injection | `/libs/agno/agno/memory/manager.py` | ~200-250 | Memory to prompt |
+| Knowledge references | `/libs/agno/agno/agent/agent.py` | 8578-8588 | RAG integration |
+| PromptManager | `/libs/agno/agno/prompt_versioning/manager.py` | All | Core versioning API |
+| PromptVersion | `/libs/agno/agno/prompt_versioning/models.py` | ~100-200 | Version model |
+| MLflowPromptStore | `/libs/agno/agno/prompt_versioning/mlflow_backend.py` | All | Storage backend |
+| MLflow limitations | `/libs/agno/agno/prompt_versioning/docs/MLFLOW_INTEGRATION.md` | Section 8 | Workarounds |
+
+### Related Documentation
+
+| Document | Location | Description |
+|----------|----------|-------------|
+| REFERENCE.md | `/libs/agno/agno/prompt_versioning/REFERENCE.md` | Quick API reference |
+| COMPREHENSIVE_GUIDE.md | `/libs/agno/agno/prompt_versioning/docs/COMPREHENSIVE_GUIDE.md` | Full user guide |
+| MLFLOW_INTEGRATION.md | `/libs/agno/agno/prompt_versioning/docs/MLFLOW_INTEGRATION.md` | MLflow deep dive |
+| SYSTEM_PROMPT_EDITOR_DESIGN.md | `/libs/agno/agno/prompt_versioning/docs/SYSTEM_PROMPT_EDITOR_DESIGN.md` | High-level design |
+
+### Model Cross-References
+
+| Model | Extends/Uses | Purpose |
+|-------|--------------|---------|
+| `SystemPromptComponent` | Pydantic BaseModel | Individual component |
+| `PromptVersion.components` | List[SystemPromptComponent] | Native storage |
+| `PromptDiff.components_*` | Component diff fields | Change tracking |
+| `SystemPromptEditor` | PromptManager | Agent integration |
+
+---
+
 ## Appendix: Files Modified
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `models.py` | MODIFY | Add PromptComponentType, SystemPromptComponent, modify PromptVersion |
-| `mlflow_backend.py` | MODIFY | Component serialization |
-| `manager.py` | MODIFY | Add component-aware methods |
-| `system_prompt_editor.py` | NEW | Agent integration layer |
+| `models.py` | MODIFY | Add PromptComponentType, SystemPromptComponent, modify PromptVersion, PromptDiff |
+| `mlflow_backend.py` | MODIFY | Component and change_description serialization |
+| `manager.py` | MODIFY | Add component-aware methods including reorder_components |
+| `system_prompt_editor.py` | NEW | Agent integration layer with export and preview |
 
 ---
 
