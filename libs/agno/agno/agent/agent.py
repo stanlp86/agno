@@ -399,6 +399,11 @@ class Agent:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Agent
     stream_events: Optional[bool] = None
+    # If True, stream responses even when using structured outputs (output_schema).
+    # By default, streaming is disabled when output_schema is set to ensure proper parsing.
+    # Enable this for long-running requests (e.g., Anthropic requires streaming for requests > 10 minutes).
+    # Note: The structured output will still be parsed after the stream completes.
+    stream_with_structured_output: bool = False
 
     # Persist the events on the run response
     store_events: bool = False
@@ -5544,9 +5549,11 @@ class Agent:
         should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
 
         stream_model_response = True
-        if should_parse_structured_output:
+        if should_parse_structured_output and not self.stream_with_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
+        elif should_parse_structured_output and self.stream_with_structured_output:
+            log_debug("Response model set with stream_with_structured_output=True, streaming enabled.")
 
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -5631,9 +5638,11 @@ class Agent:
         should_parse_structured_output = output_schema is not None and self.parse_response and self.parser_model is None
 
         stream_model_response = True
-        if should_parse_structured_output:
+        if should_parse_structured_output and not self.stream_with_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
+        elif should_parse_structured_output and self.stream_with_structured_output:
+            log_debug("Response model set with stream_with_structured_output=True, streaming enabled.")
 
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
