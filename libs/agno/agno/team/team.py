@@ -569,6 +569,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
+        stream_with_structured_output: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         store_member_responses: bool = False,
@@ -705,6 +706,7 @@ class Team:
 
         self.stream = stream
         self.stream_events = stream_events or stream_intermediate_steps
+        self.stream_with_structured_output = stream_with_structured_output
         self.store_events = store_events
         self.store_member_responses = store_member_responses
 
