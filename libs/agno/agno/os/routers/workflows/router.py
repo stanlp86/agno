@@ -52,6 +52,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
     """Handle workflow execution directly via WebSocket"""
     try:
         workflow_id = message.get("workflow_id")
+        additional_data=message.get("additional_data")
         session_id = message.get("session_id")
         user_message = message.get("message", "")
         user_id = message.get("user_id")
@@ -83,6 +84,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         # Execute workflow in background with streaming
         await workflow.arun(  # type: ignore
             input=user_message,
+            additional_data=additional_data,
             session_id=session_id,
             user_id=user_id,
             stream=True,
